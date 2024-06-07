@@ -5,6 +5,7 @@ from koza.cli_utils import get_koza_app
 
 koza_app = get_koza_app("clinvar_variant")
 
+CONTRIBUTES_TO = "biolink:contributes_to"
 HAS_PHENOTYPE = "biolink:has_phenotype"
 IS_SEQUENCE_VARIANT_OF = 'biolink:is_sequence_variant_of'
 
@@ -100,7 +101,7 @@ while (row := koza_app.get_row()) is not None:
             VariantToDiseaseAssociation(
                 id=str(uuid.uuid4()),
                 subject=seq_var.id,
-                predicate='biolink:contributes_to',  # TODO: something in the row should help us choose this, maybe biolink:causes ?
+                predicate=CONTRIBUTES_TO,
                 object=mondo_id,
                 primary_knowledge_source="infores:clinvar",
                 aggregator_knowledge_source=["infores:monarchinitiative"],
@@ -114,7 +115,7 @@ while (row := koza_app.get_row()) is not None:
             VariantToPhenotypicFeatureAssociation(
                 id=str(uuid.uuid4()),
                 subject=seq_var.id,
-                predicate=HAS_PHENOTYPE,
+                predicate=CONTRIBUTES_TO,
                 object=hp_id,
                 primary_knowledge_source="infores:clinvar",
                 aggregator_knowledge_source=["infores:monarchinitiative"],
