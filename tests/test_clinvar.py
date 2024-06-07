@@ -143,8 +143,7 @@ def mondo_hpo_entities(mondo_and_hpo_row, mock_koza):
 
 # Test the output of the transform
 def test_no_mondo_row(no_mondo_entities):
-    assert len(no_mondo_entities) > 0
-    assert len([entity for entity in no_mondo_entities if isinstance(entity, SequenceVariant)]) == 1
+    assert len(no_mondo_entities) == 0
 
 
 def test_mondo_hpo_entities_hpo(mondo_hpo_entities):

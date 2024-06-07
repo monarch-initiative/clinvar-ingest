@@ -91,7 +91,11 @@ while (row := koza_app.get_row()) is not None:
             )
         )
 
-    for mondo_id in extract_ids('MONDO', row['CLNDISDB']):
+    mondo_ids = extract_ids('MONDO', row['CLNDISDB'])
+    if len(mondo_ids) == 0:
+        continue  # exit without writing the sequence variant entity if there's no disease association
+
+    for mondo_id in mondo_ids:
         entities.append(
             VariantToDiseaseAssociation(
                 id=str(uuid.uuid4()),
@@ -106,7 +110,6 @@ while (row := koza_app.get_row()) is not None:
         )
 
     for hp_id in extract_ids('Human_Phenotype_Ontology:HP:', row['CLNDISDB']):
-
         entities.append(
             VariantToPhenotypicFeatureAssociation(
                 id=str(uuid.uuid4()),
