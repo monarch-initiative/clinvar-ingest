@@ -1,0 +1,125 @@
+# Config file for transforming data from a source
+# See additional/optional config parameters at https://koza.monarchinitiative.org/Ingests/source_config/
+
+name: "clinvar_variant"
+metadata: "./src/clinvar_ingest/metadata.yaml"
+format: "csv" # Format of the data files (csv or json)
+files:
+  - "./data/clinvar.tsv"
+#################################################################################################
+### file_archive is typically optional, but required if:                                      ###
+###    1. files is not provided                                                               ###
+###    2. files listed above are compressed in an archive such as a tarball or zip file       ###
+### If you have a file archive, uncomment the line below and provide the path to the archive  ###
+### Otherwise, it is safe to remove this section and the file_archive parameter               ###
+#################################################################################################
+# file_archive: Optional path to a file archive containing files to process
+
+columns:
+  - CHROM  
+  - POS
+  - ID
+  - REF
+  - ALT
+  - QUAL
+  - FILTER
+  - AF_ESP
+  - AF_EXAC
+  - AF_TGP
+  - ALLELEID
+  - CLNDN
+  - CLNDNINCL
+  - CLNDISDB
+  - CLNDISDBINCL
+  - CLNHGVS
+  - CLNREVSTAT
+  - CLNSIG
+  - CLNSIGCONF
+  - CLNSIGINCL
+  - CLNVC
+  - CLNVCSO
+  - CLNVI
+  - DBVARID
+  - GENEINFO
+  - MC
+  - ONCDN
+  - ONCDNINCL
+  - ONCDISDB
+  - ONCDISDBINCL
+  - ONC
+  - ONCINCL
+  - ONCREVSTAT
+  - ONCCONF
+  - ORIGIN
+  - RS
+  - SCIDN
+  - SCIDNINCL
+  - SCIDISDB
+  - SCIDISDBINCL
+  - SCIREVSTAT
+  - SCI
+  - SCIINCL
+  
+
+node_properties:
+  # List of node properties to include, if ingesting nodes
+  # Remove if not ingesting nodes
+  - id
+  - name
+  - category
+
+  
+  # category
+  # deprecated
+  # description
+  # full_name
+  # has_attribute
+  # has_biological_sequence
+  # has_gene
+  # id
+  # in_taxon
+  # in_taxon_label
+  # iri
+  # name
+  # provided_by
+  # synonym
+  # type
+  # xref
+
+
+edge_properties:
+  # List of edge properties to include if ingesting edges
+  # Remove if not ingesting edges
+  - id
+  - subject
+  - predicate
+  - object
+  - category
+  - knowledge_level
+  - agent_type
+  - primary_knowledge_source
+  - aggregator_knowledge_source
+
+### Optional parameters - uncomment to use, or remove to ignore
+
+min_node_count: 10
+min_edge_count: 5
+# sssom_config: List of SSSOM config options
+# columns: List of columns to include
+# field_type_map: Dict of field names and their type (using the FieldType enum)
+# filters: List of filters to apply
+# required_properties: List of properties which must be in json data files
+# json_path: List of paths within JSON object containing data to process
+# transform_code: Path to a python file to transform the data
+# transform_mode: Which mode to use to process the transform file
+# global_table: Path to a global table file
+# local_table: Path to a local table file
+
+### CSV specific parameters
+
+delimiter: "\t" # Delimiter for csv files (REQUIRED if format is csv)
+header: 0
+# header_delimiter: Delimiter for header in csv files
+# header_prefix: Prefix for header in csv files
+# comment_char: Comment character for csv files
+# skip_blank_lines: Boolean - whether to skip blank lines in csv files

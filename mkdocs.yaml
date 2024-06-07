@@ -1,0 +1,85 @@
+repo_name: 'monarch-initiative/clinvar-ingest'
+repo_url: 'https://github.com/monarch-initiative/clinvar-ingest'
+site_name: 'clinvar-ingest'
+site_url: 'https://monarch-initiative.github.io/clinvar-ingest/'
+
+### Optional: Uncomment the following line to customize the navigation bar
+# nav:
+
+theme:
+    name: 'material'
+    docs_dir: docs/
+    logo: ''
+    favicon: ''
+    features:
+        - navigation.expand
+        - navigation.instant
+        - navigation.tracking
+        - navigation.tabs
+        - navigation.tabs.sticky
+    palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-2
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to light mode
+    font:
+        text: 'Source Sans Pro'
+        code: 'Source Sans Pro Mono'
+
+
+plugins:
+  - search
+  - macros:
+      module_name: 'scripts/mkdocs-macros'
+  - mkdocstrings:
+      handlers:
+        python:
+          import:
+            - https://docs.python.org/3/objects.inv
+            - https://mkdocstrings.github.io/objects.inv
+            - https://mkdocstrings.github.io/griffe/objects.inv
+          options:
+            docstring_style: google
+            docstring_options:
+              docstring_section_style: table
+              ignore_init_summary: yes
+            merge_init_into_class: yes
+            # separate_signature: yes
+            show_signature: no
+            show_source: no
+            show_root_full_path: no
+            show_root_toc_entry: False
+            filters:
+              - '!^_[^_]'
+              # - '^_[^_]'
+
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.emoji
+  - pymdownx.keys
+  - pymdownx.magiclink
+  - pymdownx.superfences
+  - pymdownx.tabbed
+  - attr_list
+  - pymdownx.betterem:
+      smart_enable: all
+  - pymdownx.snippets:
+      check_paths: true
+  - pymdownx.tabbed:
+      alternate_style: true
+
+### Uncomment the following lines to add social link/s to the footer
+# extra:
+#   social:
+#     - icon: 'fontawesome/solid/house'
+#       link: 'some_url'

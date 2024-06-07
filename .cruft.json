@@ -1,0 +1,25 @@
+{
+  "template": "https://github.com/monarch-initiative/cookiecutter-monarch-ingest.git",
+  "commit": "bd969c818d9380b12a43d0cc4a20765ea6aa12c8",
+  "checkout": null,
+  "context": {
+    "cookiecutter": {
+      "github_org_name": "monarch-initiative",
+      "project_name": "clinvar-ingest",
+      "project_description": "modular ingest for clinvar variants. Makes variant nodes and then creates associations based on the relative information (phenotype, disease, gene, pathogenicity)",
+      "__repo_name": "clinvar-ingest",
+      "__project_slug": "clinvar_ingest",
+      "__project_url": "https://github.com/monarch-initiative/clinvar-ingest",
+      "ingest_source": "clinvar",
+      "ingest_type": "variant",
+      "__ingest_name": "clinvar_variant",
+      "min_python_version": "3.10",
+      "full_name": "Aaron Odell",
+      "email": "aaron@tislab.org",
+      "__author": "Aaron Odell <aaron@tislab.org>",
+      "license": "MIT",
+      "_template": "https://github.com/monarch-initiative/cookiecutter-monarch-ingest.git"
+    }
+  },
+  "directory": null
+}
