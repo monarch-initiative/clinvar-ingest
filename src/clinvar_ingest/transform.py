@@ -5,6 +5,8 @@ from koza.cli_utils import get_koza_app
 
 koza_app = get_koza_app("clinvar_variant")
 
+HAS_PHENOTYPE = "biolink:has_phenotype"
+IS_SEQUENCE_VARIANT_OF = 'biolink:is_sequence_variant_of'
 
 # def parse_vcf_info_column(info_column):
 #     rel_columns = {"GENEINFO":'',      # Gene(s) for the variant reported as gene symbol:gene id. The gene symbol and id are delimited by a colon (:) and each pair is delimited by a vertical bar (|)
@@ -25,86 +27,89 @@ koza_app = get_koza_app("clinvar_variant")
 
 
 # TO DO (how to link to existing gene_ids already in database)
-def make_genes_from_row(gene_row):
-        gene_objs = []
-        if "|" in gene_row:
-             gene_rows = gene_row.split('|')
-        else:
-             gene_rows = [gene_row]
-        
-        for gene_info in gene_rows:
-            symbol, idnum = gene_info.split(':')[0], gene_info.split(':')[1]
-            gene_obj = Gene(id=idnum, 
-                            symbol=symbol, 
-                            in_taxon="Homo sapians"
-                            )
-        
-        return gene_objs
+def make_genes_from_row(gene_list):
+    if gene_list == '.':
+        return []
+    gene_ids = []
+    genes = gene_list.split('|')
+    for gene in genes:
+        values = gene.split(':')[1:]  # sometimes there's more than one Entrez ID after the symbol
+        for value in values:
+            gene_ids.append("NCBIGene:{}".format(value))
+    return gene_ids
 
     #ZNRF2:223082|LOC105375218:105375218|LOC129998188:12999818
 
+def extract_ids(prefix, value):
+    ids = []
+    groups = value.split('|')
+    for group in groups:
+        items = group.split(',')
+        for item in items:
+            # replace the MONDO banana if necessary
+            item.replace('MONDO:MONDO:', 'MONDO:')
+            # deal with HP DB name + prefix
+            item.replace('Human_Phenotype_Ontology:HP:', 'HP:')
+            if item.startswith(prefix):
+                ids.append(item)
+    return ids
 
 
 while (row := koza_app.get_row()) is not None:
     # Code to transform each row of data
     # For more information, see https://koza.monarchinitiative.org/Ingests/transform
-    
-    #rel_fields = row["INFO"].split('|')
-    
-    #print(row)
 
-    # Buggy still
-    gen_objs = make_genes_from_row(row["GENEINFO"])
+    entities = []
 
-    # Do we need to create a gene object 
+    gene_ids = make_genes_from_row(row["GENEINFO"])
+
     seq_var = SequenceVariant(id="CLINVAR:{}".format(row["ID"]),
                               name=row["CLNHGVS"],
-                              xref=row["RS"],
-                              has_gene=gen_objs[0])
-    
-    #print(seq_var)
-    
-                              #has_gene)
+                              xref=["DBSNP:{}".format(row["RS"])],
+                              has_gene=gene_ids,
+                              in_taxon=["NCBITaxon:9606"],
+                              in_taxon_label="Homo sapiens",
+                              # type? could this be a SO term?
+                              # has_bioligical_sequence  do we want it? not so sure
+                              )
 
-                              #has_attribute
-                                # has_biological_sequence
-                                # has_gene
+    entities.append(seq_var)
 
-                                # in_taxon
-                                # in_taxon_label   ##Homo sapiens
+    for gene_id in gene_ids:
+        entities.append(VariantToGeneAssociation(
+            id=str(uuid.uuid4()),
+            subject=seq_var.id,
+            predicate=IS_SEQUENCE_VARIANT_OF,  # TODO: more specific predicates might be possible, is_missense_variant_of etc
+            object=gene_id,
+            primary_knowledge_source="infores:clinvar",
+            aggregator_knowledge_source=["infores:monarchinitiative"],
+            knowledge_level=KnowledgeLevelEnum.knowledge_assertion,  # TODO: we should confirm this
+            agent_type=AgentTypeEnum.manual_agent  # TODO: we should confirm this
+        ))
 
+    for mondo_id in extract_ids('MONDO', row['CLNDISDB']):
+        entities.append(VariantToDiseaseAssociation(
+            id=str(uuid.uuid4()),
+            subject=seq_var.id,
+            predicate='biolink:contributes_to',   # TODO: something in the row should help us choose this, maybe biolink:causes ?
+            object=mondo_id,
+            primary_knowledge_source="infores:clinvar",
+            aggregator_knowledge_source=["infores:monarchinitiative"],
+            knowledge_level=KnowledgeLevelEnum.knowledge_assertion,
+            agent_type=AgentTypeEnum.manual_agent
+        ))
 
-                                # iri
+    for hp_id in extract_ids('Human_Phenotype_Ontology:HP:', row['CLNDISDB']):
 
-                                # provided_by
-                                # synonym
-                                # type
-    
-    
-    
-    
-    
-    
-    
-    # entity_a = Entity(
-    #     id=f"XMPL:00000{row['example_column_1'].split('_')[-1]}",
-    #     name=row["example_column_1"],
-    #     category=["biolink:Entity"],
-    # )
-    # entity_b = Entity(
-    #     id=f"XMPL:00000{row['example_column_2'].split('_')[-1]}",
-    #     name=row["example_column_2"],
-    #     category=["biolink:Entity"],
-    # )
-    # association = Association(
-    #     id=str(uuid.uuid1()),
-    #     subject=row["example_column_1"],
-    #     predicate=row["example_column_3"],
-    #     object=row["example_column_2"],
-    #     subject_category="SUBJ",
-    #     object_category="OBJ",
-    #     category=["biolink:Association"],
-    #     knowledge_level="not_provided",
-    #     agent_type="not_provided",
-    # )
-    # koza_app.write(entity_a, entity_b, association)
+        entities.append(VariantToPhenotypicFeatureAssociation(
+            id=str(uuid.uuid4()),
+            subject=seq_var.id,
+            predicate=HAS_PHENOTYPE,
+            object=hp_id,
+            primary_knowledge_source="infores:clinvar",
+            aggregator_knowledge_source=["infores:monarchinitiative"],
+            knowledge_level=KnowledgeLevelEnum.knowledge_assertion,
+            agent_type=AgentTypeEnum.manual_agent
+        ))
+
+    koza_app.write(*entities)
