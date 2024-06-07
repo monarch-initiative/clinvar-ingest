@@ -76,7 +76,7 @@ download:
 .PHONY: post-download
 post-download:
 	gunzip -f data/clinvar.vcf.gz || true
-	vk vcf2tsv wide --print-header data/clinvar.vcf > data/clinvar.tsv
+	$(RUN) vk vcf2tsv wide --print-header data/clinvar.vcf > data/clinvar.tsv
 
 
 .PHONY: run
