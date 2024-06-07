@@ -9,6 +9,7 @@ https://koza.monarchinitiative.org/Usage/testing/
 """
 
 import pytest
+from koza.utils.testing_utils import mock_koza
 from biolink_model.datamodel.pydanticmodel_v2 import (
     SequenceVariant,
     VariantToGeneAssociation,
