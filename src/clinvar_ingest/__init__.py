@@ -1,4 +1,5 @@
 """clinvar-ingest package."""
+
 import importlib_metadata
 
 try:
