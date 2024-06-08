@@ -19,7 +19,7 @@ if Path(nodes_file).exists():
 # Edges
 if Path(edges_file).exists():
     query = f"""
-    SELECT category, split_part(subject, ':', 1) as subject_prefix, predicate,
+    SELECT category, split_part(subject, ':', 1) as subject_prefix, predicate, original_predicate, qualifiers,
     split_part(object, ':', 1) as object_prefix, count(*)
     FROM '{edges_file}'
     GROUP BY all

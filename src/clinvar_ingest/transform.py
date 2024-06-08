@@ -6,6 +6,7 @@ from koza.cli_utils import get_koza_app
 koza_app = get_koza_app("clinvar_variant")
 
 CONTRIBUTES_TO = "biolink:contributes_to"
+CAUSES = "biolink:causes"
 HAS_PHENOTYPE = "biolink:has_phenotype"
 IS_SEQUENCE_VARIANT_OF = 'biolink:is_sequence_variant_of'
 
@@ -65,6 +66,8 @@ while (row := koza_app.get_row()) is not None:
 
     gene_ids = make_genes_from_row(row["GENEINFO"])
 
+    clinical_significance = row["CLNSIG"]
+
     seq_var = SequenceVariant(
         id="CLINVAR:{}".format(row["ID"]),
         name=row["CLNHGVS"],
@@ -97,12 +100,24 @@ while (row := koza_app.get_row()) is not None:
         continue  # exit without writing the sequence variant entity if there's no disease association
 
     for mondo_id in mondo_ids:
+        if clinical_significance == 'Benign' or clinical_significance == 'Likely_benign':
+            predicate = CONTRIBUTES_TO
+            negated = True
+        elif clinical_significance == 'Likely_pathogenic' or clinical_significance == 'Pathogenic':
+            predicate = CAUSES
+            negated = False
+        else:
+            # uncertain significance or mixed / complicated, skip for now
+            continue
+
         entities.append(
             VariantToDiseaseAssociation(
                 id=str(uuid.uuid4()),
                 subject=seq_var.id,
-                predicate=CONTRIBUTES_TO,
+                predicate=predicate,
+                qualifiers=[row["CLNREVSTAT"]],
                 object=mondo_id,
+                original_predicate=row["CLNSIG"],
                 primary_knowledge_source="infores:clinvar",
                 aggregator_knowledge_source=["infores:monarchinitiative"],
                 knowledge_level=KnowledgeLevelEnum.knowledge_assertion,

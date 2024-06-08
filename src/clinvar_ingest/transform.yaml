@@ -95,6 +95,8 @@ edge_properties:
   - predicate
   - object
   - category
+  - original_predicate
+  - qualifiers
   - knowledge_level
   - agent_type
   - primary_knowledge_source
