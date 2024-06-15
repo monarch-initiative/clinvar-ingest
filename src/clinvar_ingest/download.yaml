@@ -5,3 +5,9 @@
 ---
 - url: https://ftp.ncbi.nlm.nih.gov/pub/clinvar/vcf_GRCh38/clinvar.vcf.gz
   local_name: data/clinvar.vcf.gz
+
+- url: https://ftp.ncbi.nlm.nih.gov/pub/clinvar/tab_delimited/submission_summary.txt.gz
+  local_name: data/submission_summary.txt.gz
+
+- url: https://data.monarchinitiative.org/mappings/latest/mondo.sssom.tsv
+  local_name: data/mondo.sssom.tsv

@@ -4,8 +4,12 @@
 name: "clinvar_variant"
 metadata: "./src/clinvar_ingest/metadata.yaml"
 format: "csv" # Format of the data files (csv or json)
+delimiter: "\t"
+
 files:
   - "./data/clinvar.tsv"
+
+
 #################################################################################################
 ### file_archive is typically optional, but required if:                                      ###
 ###    1. files is not provided                                                               ###
@@ -125,3 +129,12 @@ header: 0
 # header_prefix: Prefix for header in csv files
 # comment_char: Comment character for csv files
 # skip_blank_lines: Boolean - whether to skip blank lines in csv files
+
+
+# sssom_config:
+#   files:
+#      - 'data/mondo.sssom.tsv'
+#   object_target_prefixes:
+#      - 'MONDO'
+#   use_match: 
+#      - 'skos:exactMatch' 
