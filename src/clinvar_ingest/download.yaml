@@ -11,3 +11,6 @@
 
 - url: https://data.monarchinitiative.org/mappings/latest/mondo.sssom.tsv
   local_name: data/mondo.sssom.tsv
+
+- url: https://ftp.ncbi.nlm.nih.gov/pub/medgen/MedGenIDMappings.txt.gz
+  local_name: data/MedGenIDMappings.txt.gz

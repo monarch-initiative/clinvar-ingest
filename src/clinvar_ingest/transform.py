@@ -9,12 +9,12 @@ from koza.cli_utils import get_koza_app
 
 
 ### Create variant--> record mapping {variant_id:[record,...]}
-def make_variant_record_map(submission_filepath):
+def make_variant_record_map(submission_path):
     
     # Last line with "#" character in it will be read as the header
     var_records = {}
     rec_count = 0
-    with gzip.open(submission_filepath, 'rt') as infile:
+    with gzip.open(submission_path, 'rt') as infile:
         
         for line in infile:
             line = line.strip('\r').strip('\n')
@@ -100,7 +100,36 @@ def make_mondo_map(sssom_path):
         map_to_mondo.update({kv:{v:''}})
     
     return map_to_mondo
+
+
+def make_medgen_to_mondo_map(medgen_path):
     
+    # Last line with "#" character in it will be read as the header
+    map_to_mondo = {}
+    rec_count = 0
+    with gzip.open(medgen_path, 'rt') as infile:
+        
+        for line in infile:
+            line = line.strip('\r').strip('\n')
+            if line[0] == "#":
+                continue
+            else:
+                info = line.split("|")
+                dis_id = info[2]
+                mdg_id = "MedGen:{}".format(info[0])
+                
+                if "MONDO:" in dis_id:
+                    if mdg_id not in map_to_mondo:
+                        map_to_mondo.update({mdg_id:{}})
+                    
+                    # Will account for multimapping terms if there are any
+                    map_to_mondo[mdg_id].update({dis_id:''})
+    
+    multi_mappers = len([k for k, v in map_to_mondo.items() if len(v) > 1])
+    print("- Total mappings found {}".format(format(len(map_to_mondo), ',')))
+    print("- MedGen ids that map to multiple mondo {}".format(format(multi_mappers, ',')))
+    return map_to_mondo
+
 
 def make_genes_from_row(gene_list):
     if gene_list == '.':
@@ -122,10 +151,10 @@ def format_id_to_map(info):
     if "MONDO:" in info:
         idname = "MONDO:{}".format(idnum)
 
-    elif "HP" in info:
+    elif "HP:" in info:
         idname = "HP:{}".format(idnum)
 
-    elif "MeSH" in info:
+    elif "MeSH:" in info:
         idname = "mesh:{}".format(idnum)
         
     elif "." == info:
@@ -137,7 +166,7 @@ def format_id_to_map(info):
     return idname
   
 
-def get_variant_to_disease_predicate(term, pathogenicity_lookup):
+def get_variant_to_disease_predicate(term, pathogenic_lookup):
     
     if term in pathogenic_lookup:
         predicate = "biolink:causes"
@@ -166,12 +195,23 @@ def variant_records_to_disease(record_list, review_star_map, map_to_mondo, patho
         mapped_predicate = get_variant_to_disease_predicate(clinsig, pathogenicity_lookup)
         org_predicate = clinsig
         
-        for dis_id in rec["SubmittedPhenotypeInfo"].split(';'):
+        for dis_id, mg_mapping in zip(rec["SubmittedPhenotypeInfo"].split(';'),
+                                      rec["ReportedPhenotypeInfo"].split(';')):
             
             # Convert to MONDO_ID if we can
             dis_id = format_id_to_map(dis_id)
+
+            # Each pair of Submitted and Reported phenotypes should prioritize using the Reported value before the Submitted
+            # In other words, the MedGen id number the Submitted phenotype info maps to is the one we want to use (ie ReportedPhenotype)
+            mg_map = "MedGen:{}".format(mg_mapping.split(":")[0]) # number: name and description of disease
             mondo_ids = []
-            if dis_id in map_to_mondo:
+
+            # Use reported medgen number from clinvar First if we can...
+            if mg_map in map_to_mondo:
+                mondo_ids = list(map_to_mondo[mg_map].keys())
+            
+            # Otherwise we default to querying the sssom for a mondo map
+            elif dis_id in map_to_mondo:
                 mondo_ids = list(map_to_mondo[dis_id].keys())
             
             elif "MONDO:" in dis_id:
@@ -344,21 +384,50 @@ review_star_map = {"practice_guideline":4,
                    "flagged_submission":0, # ??? Conflicting information is what the really means...
                    ".":0} #Means that there is no data submitted for germline classification"
 
-var2disease_star_min = 3
+var2disease_star_min = 3 ### 3 is reviewed by expert panel and above (not sure about practice guidline yet...)
 
 # Manually curated to help determine predicate
 pathogenic_enums = ["Likely pathogenic", 
                     "Likely pathogenic, low penetrance", 
-                    "Pathogenic", "Pathogenic, low penetrance",
+                    "Pathogenic", 
+                    "Pathogenic, low penetrance",
                     "Pathogenic/Likely pathogenic"]
 
 pathogenic_lookup = {k:'' for k in pathogenic_enums}
+
+# HOW DO WE GENERATE A PREDICATE FROM THESE TERMS? VARIANT --> DISEASE, Drug response?
+# -
+# Affects
+# Benign
+# Benign/Likely benign
+# Established risk allele
+# Likely benign
+# Likely pathogenic
+# Likely pathogenic, low penetrance
+# Likely risk allele
+# Pathogenic
+# Pathogenic, low penetrance
+# Pathogenic/Likely pathogenic
+# Uncertain risk allele
+# Uncertain significance
+# association
+# association not found
+# confers sensitivity
+# conflicting data from submitters
+# drug response
+# not provided
+# other
+# protective
+# risk factor
+
+
 
 # File paths to acessory data
 sub_path = "./data/submission_summary.txt.gz"
 vcf_tsv_path = "./data/clinvar.tsv"
 vcf_path = "./data/clinvar.vcf"
 sssom_path = "./data/mondo.sssom.tsv"
+medgen_path = "./data/MedGenIDMappings.txt.gz"
 
 # Map records to each clinvar variant id
 var_records = make_variant_record_map(sub_path)
@@ -368,12 +437,21 @@ print("- Var records read in {}".format(format(len(var_records), ',')))
 map_to_mondo = make_mondo_map(sssom_path)
 print("- mondo sssom read in {}".format(format(len(map_to_mondo), ',')))
 
+# Make medgen to mondo map
+medgen_to_mondo = make_medgen_to_mondo_map(medgen_path)
+
+# Merge the two maps we made into one by updatating one dictionary with the other
+print("- SSSOM mappings {}".format(format(len(map_to_mondo), ',')))
+print("- MedGen mappings {}".format(format(len(medgen_to_mondo), ',')))
+map_to_mondo.update(medgen_to_mondo)
+print("- Combined mappings {}".format(format(len(map_to_mondo), ',')))
+
 # Koza app loop through each line of the file as a dictionary 
 no_record = 0
 with_record = 0
 var_to_diss = 0
 dis_hp_counts = {i:0 for i in range(0, 50)}
-map_stats = {"MONDO":0, "mesh":0, "OMIM":0, "Orphanet":0}
+map_stats = {"MONDO":0, "mesh":0, "OMIM":0, "Orphanet":0, "MedGen":0}
 
 vars_added = 0
 var2gene_added = 0
@@ -491,7 +569,13 @@ while (row := koza_app.get_row()) is not None:
         #        negated = True
         
         ### predicate is a dictionary of possible predicate values (in case a variant has multiple status's? (not sure possible...))
+        og_preds = sorted(list(org_predicates[dis_id].keys()))
+        #if len(og_preds) > 1:
+            #print("- Variant to disease predicates {}".format(og_preds))
+
+        #og_pred = og_preds[0]
         for pred in list(predicate.keys()):
+
             entities.append(
                 VariantToDiseaseAssociation(
                     id=str(uuid.uuid4()),
@@ -499,7 +583,7 @@ while (row := koza_app.get_row()) is not None:
                     predicate=pred,
                     qualifiers=[row["CLNREVSTAT"]],
                     object=dis_id,
-                    original_predicate=row["CLNSIG"], # This can also be pulled from submission_summary records...,
+                    original_predicate=row["CLNSIG"], ##":".join(og_preds)# This can also be pulled from submission_summary records...,
                     primary_knowledge_source="infores:clinvar",
                     aggregator_knowledge_source=["infores:monarchinitiative"],
                     knowledge_level=KnowledgeLevelEnum.knowledge_assertion,
@@ -508,7 +592,6 @@ while (row := koza_app.get_row()) is not None:
             )
             var2dis_added += 1
     
-
     # TO DO: Predicate when and what still needs work
     # Create Variant to HP assocations (Currently dependent on an existing VariantToDisease association)
     for mondo_id, hp_terms in mondo_to_hp.items():
