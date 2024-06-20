@@ -165,19 +165,8 @@ def format_id_to_map(info):
     
     return idname
   
-
-def get_variant_to_disease_predicate(term, pathogenic_lookup):
-    
-    if term in pathogenic_lookup:
-        predicate = "biolink:causes"
-    else:
-        predicate = "biolink:contributes_to"
-    
-    return predicate    
-
-
-def variant_records_to_disease(record_list, review_star_map, map_to_mondo, pathogenicity_lookup, star_min=3):
-    
+ 
+def variant_records_to_disease(record_list, review_star_map, map_to_mondo, predicate_map, star_min=3):
     # Each record is a dictionary. We have a list of records that we can loop through
     # keys = 
     # VariationID, ClinicalSignificance, DateLastEvaluated, 
@@ -187,35 +176,37 @@ def variant_records_to_disease(record_list, review_star_map, map_to_mondo, patho
     preds = {}
     org_preds = {}
     for rec in record_list:
+        
         stars = int(review_star_map[rec["ReviewStatus"].replace(" ", "_")])
+        clinsig = rec["ClinicalSignificance"]
+        
         if stars < star_min:
             continue
         
-        clinsig = rec["ClinicalSignificance"]
-        mapped_predicate = get_variant_to_disease_predicate(clinsig, pathogenicity_lookup)
+        if clinsig not in predicate_map:
+            continue
+            
+        mapped_predicate = predicate_map[clinsig]
         org_predicate = clinsig
         
-        for dis_id, mg_mapping in zip(rec["SubmittedPhenotypeInfo"].split(';'),
-                                      rec["ReportedPhenotypeInfo"].split(';')):
+        #if len(rec["SubmittedPhenotypeInfo"].split(';')) != len(rec["ReportedPhenotypeInfo"].split(';')):
+        #    print("- ERROR, Submitted vs Reported PhenotypeInfo is off kilter...")
+        #    print(rec["SubmittedPhenotypeInfo"], rec["ReportedPhenotypeInfo"])
+        
+        # Submitted and Reported "phenotype info" columns can have a different number of submissions.
+        # So we need to loop through these terms one by one first for the reported terms, and then if no
+        # mondo id is found, then we try and pull from the supported terms
+        
+        mapped_terms = 0
+        for mg_mapping in rec["ReportedPhenotypeInfo"].split(';'):
             
             # Convert to MONDO_ID if we can
-            dis_id = format_id_to_map(dis_id)
-
-            # Each pair of Submitted and Reported phenotypes should prioritize using the Reported value before the Submitted
-            # In other words, the MedGen id number the Submitted phenotype info maps to is the one we want to use (ie ReportedPhenotype)
             mg_map = "MedGen:{}".format(mg_mapping.split(":")[0]) # number: name and description of disease
             mondo_ids = []
-
-            # Use reported medgen number from clinvar First if we can...
+            
+            # Use reported medgen number from clinver First if we can...
             if mg_map in map_to_mondo:
                 mondo_ids = list(map_to_mondo[mg_map].keys())
-            
-            # Otherwise we default to querying the sssom for a mondo map
-            elif dis_id in map_to_mondo:
-                mondo_ids = list(map_to_mondo[dis_id].keys())
-            
-            elif "MONDO:" in dis_id:
-                mondo_ids = [dis_id]
             
             # Can't map this one back
             if len(mondo_ids) == 0:
@@ -228,7 +219,36 @@ def variant_records_to_disease(record_list, review_star_map, map_to_mondo, patho
                     org_preds.update({d:{}})
                 preds[d].update({mapped_predicate:''})
                 org_preds[d].update({org_predicate:''})
-                
+                mapped_terms += 1
+    
+        # Try to query the Submitted info for mondo id if none is found for Reported info
+        if mapped_terms == 0:
+            for dis_id in rec["SubmittedPhenotypeInfo"].split(';'):
+            
+                # Convert to MONDO_ID if we can
+                dis_id = format_id_to_map(dis_id)
+
+                # Otherwise we default to querying the sssom for a mondo map
+                if dis_id in map_to_mondo:
+                    mondo_ids = list(map_to_mondo[dis_id].keys())
+
+                elif "MONDO:" in dis_id:
+                    mondo_ids = [dis_id]
+
+                # Can't map this one back
+                if len(mondo_ids) == 0:
+                    continue
+
+                for d in mondo_ids:
+                    dis.update({d:''})
+                    if d not in preds:
+                        preds.update({d:{}})
+                        org_preds.update({d:{}})
+                    preds[d].update({mapped_predicate:''})
+                    org_preds[d].update({org_predicate:''})
+                    mapped_terms += 1
+                    #print(rec["SubmittedPhenotypeInfo"], rec["ReportedPhenotypeInfo"])
+    
     return dis, preds, org_preds
    
 
@@ -369,7 +389,8 @@ koza_app = get_koza_app("clinvar_variant")
 CONTRIBUTES_TO = "biolink:contributes_to"
 CAUSES = "biolink:causes"
 HAS_PHENOTYPE = "biolink:has_phenotype"
-IS_SEQUENCE_VARIANT_OF = 'biolink:is_sequence_variant_of'
+IS_SEQUENCE_VARIANT_OF = "biolink:is_sequence_variant_of"
+RELATED_TO = "biolink:related_to"
 
 # Manually curated terms derived from files for data modeling purposes
 review_star_map = {"practice_guideline":4,
@@ -387,15 +408,36 @@ review_star_map = {"practice_guideline":4,
 var2disease_star_min = 3 ### 3 is reviewed by expert panel and above (not sure about practice guidline yet...)
 
 # Manually curated to help determine predicate
-pathogenic_enums = ["Likely pathogenic", 
-                    "Likely pathogenic, low penetrance", 
-                    "Pathogenic", 
-                    "Pathogenic, low penetrance",
-                    "Pathogenic/Likely pathogenic"]
+# For using submission_summary file (pulling terms from the clinicial significance column)
+predicate_map = {"Pathogenic":CAUSES,
+                 "Pathogenic, low penetrance":CAUSES,
+                 "Pathogenic/Likely pathogenic":CAUSES,
+                
+                 "Likely pathogenic":CONTRIBUTES_TO,
+                 "Likely pathogenic, low penetrance":CONTRIBUTES_TO,
+                 
+                 # If we want to include more terms we can do that here...
+                 "Benign":RELATED_TO,
+                 "Benign/Likely benign":RELATED_TO,
+                 "Likely benign":RELATED_TO,
 
-pathogenic_lookup = {k:'' for k in pathogenic_enums}
+                 "Affects":RELATED_TO,
+                 "Established risk allele":RELATED_TO,
+                 "Likely risk allele":RELATED_TO,
+                 "Uncertain risk allele":RELATED_TO,
+                 "Uncertain significance":RELATED_TO,
+                 "association":RELATED_TO,
+                 "association not found":RELATED_TO,
+                 "confers sensitivity":RELATED_TO,
+                 "conflicting data from submitters":RELATED_TO,
+                 "drug response":RELATED_TO,
+                 "not provided":RELATED_TO,
+                 "protective":RELATED_TO,
+                 "risk factor":RELATED_TO}
 
-# HOW DO WE GENERATE A PREDICATE FROM THESE TERMS? VARIANT --> DISEASE, Drug response?
+
+
+# These are the available values that can go into the predicate map if want to include more data...
 # -
 # Affects
 # Benign
@@ -507,7 +549,7 @@ while (row := koza_app.get_row()) is not None:
     disease_ids, disease_predicates, org_predicates  = variant_records_to_disease(var_records[varid], 
                                                                                   review_star_map, 
                                                                                   map_to_mondo, 
-                                                                                  pathogenic_lookup,
+                                                                                  predicate_map,
                                                                                   star_min=var2disease_star_min)
     
     # Pull and format disease_ids and HP terms
@@ -583,7 +625,7 @@ while (row := koza_app.get_row()) is not None:
                     predicate=pred,
                     qualifiers=[row["CLNREVSTAT"]],
                     object=dis_id,
-                    original_predicate=row["CLNSIG"], ##":".join(og_preds)# This can also be pulled from submission_summary records...,
+                    original_predicate=":".join(og_preds), ##row["CLNSIG"] # This can also be pulled from submission_summary records...,
                     primary_knowledge_source="infores:clinvar",
                     aggregator_knowledge_source=["infores:monarchinitiative"],
                     knowledge_level=KnowledgeLevelEnum.knowledge_assertion,
