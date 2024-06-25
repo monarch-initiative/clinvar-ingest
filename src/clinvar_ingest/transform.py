@@ -322,7 +322,7 @@ def map_mondo_to_hp(group_info, disease_ids):
     for g in group_info:
         
         # Loop through each disease_id term and see if it matches any disease this variant is associated with
-        for d in g["MAP_TERMS"]:
+        for d in set(g["MAP_TERMS"]):
             if d in disease_ids:
                 
                 # Check if exists or not currently. We can pull in multiple hp terms from records that
@@ -335,62 +335,39 @@ def map_mondo_to_hp(group_info, disease_ids):
     return mondo_to_hp
 
 
-def map_records_to_disease_hp(record_list, 
-                              clndisdb_column, 
-                              review_star_map, 
-                              map_to_mondo, 
-                              pathogenicity_lookup, 
-                              star_min=3):
-    
-    # Disease --> HP modeling pipeline
-    
-    # Variant records --> MONDO:ID based on review status of ACMG. Ratings < star_min will not have an association
-    disease_ids, disease_predicates, org_predicates  = variant_records_to_disease(record_list, 
-                                                                                   review_star_map, 
-                                                                                   map_to_mondo, 
-                                                                                   pathogenicity_lookup,
-                                                                                   star_min)
-    
-    # Pull and format disease_ids and HP terms
-    diss_info = parse_CLNDISDB(clndisdb_column)
-    
-    # Map inormation to mondo id if possible and discard otherwise
-    diss_info = map_CLNDISDB_to_mondo(diss_info, map_to_mondo)
-    
-    # Map each disease to HP terms if possible
-    mondo_to_hp = map_mondo_to_hp(diss_info, disease_ids)
-
-    return mondo_to_hp, disease_predicates, org_predicates
-    
-
 ########################################################################################
 ### Pipeline is to first create a variant to record(s) map {variantid:[{},{},{}...]} ###
 
 ### Then second is to create a disease id to mondo id map in the form of...
 ### map_to_mondo --> {"OMIM:123":"MONDO:123", ...}.
-### where the key (disease id) is from the sources found within the sssom file
+### where the key (disease id) is from the sources found within the sssom and medgen files
 
 ### The map_to_mondo is able to handle a few different types of data
-### Orphanet, OMIM, Mondo, and some MeSH for this data set 
+### Orphanet, OMIM, Mondo, MedGen, and some MeSH for this data set 
 
-### Then we attempt to map all disease ids found within any gene back to this map (map_to_mondo).
+### Then we attempt to map all disease ids found within any variant back to this map (map_to_mondo).
 ### If MONDO is found within the id name and it isn't found in the map, then it is included anyways.
 ### This results in only making variantToDisease associations if the disease id is found in our map / is a mondo id.
-### We are currently lacking MedGen which seems to be a large portion of the variant annotaitions within the vcf, but
-### doesn't necessarily mean they all contribute to connections we want to make
 
 ### Map disease id --> mondo id
-### Review status term of record --> stars determines if variantToDiesease association is made, AND HP associations (if possible)
+### Review status term of record --> stars determines if sequencevariant node is made in addition to
+### variant-->gene, variant-->disease, and variant-->phenotype edge creation...
 ### Can use 0,1,2,3,4 star mapping min to get different results (see review_star_map below)
 
 
 koza_app = get_koza_app("clinvar_variant")
 
-CONTRIBUTES_TO = "biolink:contributes_to"
-CAUSES = "biolink:causes"
-HAS_PHENOTYPE = "biolink:has_phenotype"
+# Variant to gene
 IS_SEQUENCE_VARIANT_OF = "biolink:is_sequence_variant_of"
+
+# Variant to disease
+CAUSES = "biolink:causes"
+ASSOCIATED_WITH = "biolink:associated_with_increased_likelihood_of"
 RELATED_TO = "biolink:related_to"
+
+# Variant to phenotype
+CONTRIBUTES_TO = "biolink:contributes_to" 
+
 
 # Manually curated terms derived from files for data modeling purposes
 review_star_map = {"practice_guideline":4,
@@ -413,55 +390,27 @@ predicate_map = {"Pathogenic":CAUSES,
                  "Pathogenic, low penetrance":CAUSES,
                  "Pathogenic/Likely pathogenic":CAUSES,
                 
-                 "Likely pathogenic":CONTRIBUTES_TO,
-                 "Likely pathogenic, low penetrance":CONTRIBUTES_TO,
-                 
-                 # If we want to include more terms we can do that here...
-                 "Benign":RELATED_TO,
-                 "Benign/Likely benign":RELATED_TO,
-                 "Likely benign":RELATED_TO,
+                 "Likely pathogenic":ASSOCIATED_WITH,
+                 "Likely pathogenic, low penetrance":ASSOCIATED_WITH}
 
-                 "Affects":RELATED_TO,
-                 "Established risk allele":RELATED_TO,
-                 "Likely risk allele":RELATED_TO,
-                 "Uncertain risk allele":RELATED_TO,
-                 "Uncertain significance":RELATED_TO,
-                 "association":RELATED_TO,
-                 "association not found":RELATED_TO,
-                 "confers sensitivity":RELATED_TO,
-                 "conflicting data from submitters":RELATED_TO,
-                 "drug response":RELATED_TO,
-                 "not provided":RELATED_TO,
-                 "protective":RELATED_TO,
-                 "risk factor":RELATED_TO}
+                #  # If we want to include more terms we can do that here...
+                #  "Benign":RELATED_TO,
+                #  "Benign/Likely benign":RELATED_TO,
+                #  "Likely benign":RELATED_TO,
 
-
-
-# These are the available values that can go into the predicate map if want to include more data...
-# -
-# Affects
-# Benign
-# Benign/Likely benign
-# Established risk allele
-# Likely benign
-# Likely pathogenic
-# Likely pathogenic, low penetrance
-# Likely risk allele
-# Pathogenic
-# Pathogenic, low penetrance
-# Pathogenic/Likely pathogenic
-# Uncertain risk allele
-# Uncertain significance
-# association
-# association not found
-# confers sensitivity
-# conflicting data from submitters
-# drug response
-# not provided
-# other
-# protective
-# risk factor
-
+                #  "Affects":RELATED_TO,
+                #  "Established risk allele":RELATED_TO,
+                #  "Likely risk allele":RELATED_TO,
+                #  "Uncertain risk allele":RELATED_TO,
+                #  "Uncertain significance":RELATED_TO,
+                #  "association":RELATED_TO,
+                #  "association not found":RELATED_TO, # use negate
+                #  "confers sensitivity":RELATED_TO,
+                #  "conflicting data from submitters":RELATED_TO,
+                #  "drug response":RELATED_TO, # Can also probably change this for target
+                #  "not provided":RELATED_TO,
+                #  "protective":RELATED_TO,
+                #  "risk factor":RELATED_TO} # PREDESPOSES_TO_CONDITION (Can alter predicate here)
 
 
 # File paths to acessory data
@@ -505,6 +454,7 @@ while (row := koza_app.get_row()) is not None:
     # Code to transform each row of data
     # For more information, see https://koza.monarchinitiative.org/Ingests/transform
 
+    # Progress tracking
     tot_count += 1
     if tot_count % 100000 == 0:
         print("- Processed {}".format(format(tot_count, ',')))
@@ -519,12 +469,7 @@ while (row := koza_app.get_row()) is not None:
     ginfo = row["GENEINFO"]
     raw_diss_info = row["CLNDISDB"]
     
-    # Initial acmg filtering here
-    # This is also performed from variant_records_to_disease function so it is left out
-    ###stars = review_star_map[crev]
-    ###if stars < var2disease_star_min:
-    ###    continue
-    
+    # No record info means we don't want to include
     if varid not in var_records:
         no_record += 1
         continue
@@ -534,17 +479,6 @@ while (row := koza_app.get_row()) is not None:
     # Make SequenceVariant (must first find genes that are associated with it to pass in)
     gene_ids, gene_symbols = make_genes_from_row(ginfo)
 
-#     # This should do four steps in one fell swoop
-#     # Disease --> Disease + HP pipeline
-#     # Finds uniq mondo_ids, and linked hp terms (if possible)
-#     # Filters for records < star_min (ACMG review status "exper panel and practice guidlines")
-#     mondo_to_hp, d_preds, org_preds = map_records_to_disease_hp(record_list=var_records[varid],
-#                                                                 clndisdb_column=raw_diss_info, 
-#                                                                 review_star_map=review_star_map, 
-#                                                                 map_to_mondo=map_to_mondo,
-#                                                                 pathogenicity_lookup=pathogenic_lookup,
-#                                                                 star_min=3)
-    
     # Variant records --> MONDO:ID based on review status of ACMG. Ratings < star_min will not have an association
     disease_ids, disease_predicates, org_predicates  = variant_records_to_disease(var_records[varid], 
                                                                                   review_star_map, 
@@ -562,62 +496,49 @@ while (row := koza_app.get_row()) is not None:
     # {MONDO:123:[HP:123, HP:234, ...], ...}
     mondo_to_hp = map_mondo_to_hp(diss_info, disease_ids) #--> {disease_id:[HP:123, HP:234, ...], }
 
-    # TO DO: Fill out more?
+    # This means we were not able to make a variant --> disease association. 
+    # Therefore we do not want to add any information to the graph (currently...)
+    if len(mondo_to_hp) == 0:
+        continue
+
     # Start creating graph data starting with the variant itself
     seq_var = SequenceVariant(
-        id="CLINVAR:{}".format(row["ID"]),
-        name=row["CLNHGVS"],
-        xref=["DBSNP:{}".format(row["RS"])],
-        has_gene=gene_ids,
-        in_taxon=["NCBITaxon:9606"],
-        in_taxon_label="Homo sapiens")
-        # type? could this be a SO term?
-        # has_bioligical_sequence  do we want it? not so sure
-# #     )
+                    id="CLINVAR:{}".format(row["ID"]),
+                    name=row["CLNHGVS"],
+                    xref=["DBSNP:{}".format(row["RS"])],
+                    has_gene=gene_ids,
+                    in_taxon=["NCBITaxon:9606"],
+                    in_taxon_label="Homo sapiens")
+                    # type? could this be a SO term?
+                    # has_bioligical_sequence  do we want it? not so sure
+                    # #     )
 
     entities.append(seq_var)
     vars_added += 1
     
-    # TO DO: Fill out more? MC (molecular consequence value(s)) How to ascribe multiple terms with the gene info...
     # Make Gene Associations
     for gene_id in gene_ids:
         entities.append(
             VariantToGeneAssociation(
                 id=str(uuid.uuid4()),
                 subject=seq_var.id,
-                predicate=IS_SEQUENCE_VARIANT_OF,  # TODO: more specific predicates might be possible, is_missense_variant_of etc
+                predicate=IS_SEQUENCE_VARIANT_OF, # Can't be more specific than this for variants with multiple gene overlaps / annotations
                 object=gene_id,
                 primary_knowledge_source="infores:clinvar",
                 aggregator_knowledge_source=["infores:monarchinitiative"],
-                knowledge_level=KnowledgeLevelEnum.knowledge_assertion,  # TODO: we should confirm this
-                agent_type=AgentTypeEnum.manual_agent,  # TODO: we should confirm this
+                knowledge_level=KnowledgeLevelEnum.knowledge_assertion,
+                agent_type=AgentTypeEnum.manual_agent,
             )
         )
         var2gene_added += 1
     
-
-    # TO DO: Predicate when and what still needs work 
-    # Create VariantToDiseaseAssociations 
+    # Make disease associations
     for dis_id, predicate in disease_predicates.items():
-        
-        # We can curate predicate from anywhere here (original record file, or what the vcf provides)
-        # Can be able to process multiple predicates (or we can remove this)
-        #for og_pred in o/g_preds:
-        #    if og_pred in pathogenic_lookup:
-        #        predicate = CAUSES
-        #        negated = False
-        #    else:
-        #        predicate = CONTRIBUTES_TO
-        #        negated = True
         
         ### predicate is a dictionary of possible predicate values (in case a variant has multiple status's? (not sure possible...))
         og_preds = sorted(list(org_predicates[dis_id].keys()))
-        #if len(og_preds) > 1:
-            #print("- Variant to disease predicates {}".format(og_preds))
 
-        #og_pred = og_preds[0]
         for pred in list(predicate.keys()):
-
             entities.append(
                 VariantToDiseaseAssociation(
                     id=str(uuid.uuid4()),
@@ -625,7 +546,7 @@ while (row := koza_app.get_row()) is not None:
                     predicate=pred,
                     qualifiers=[row["CLNREVSTAT"]],
                     object=dis_id,
-                    original_predicate=":".join(og_preds), ##row["CLNSIG"] # This can also be pulled from submission_summary records...,
+                    original_predicate=":".join(og_preds), # Pulled from the submission_summary file
                     primary_knowledge_source="infores:clinvar",
                     aggregator_knowledge_source=["infores:monarchinitiative"],
                     knowledge_level=KnowledgeLevelEnum.knowledge_assertion,
@@ -634,7 +555,6 @@ while (row := koza_app.get_row()) is not None:
             )
             var2dis_added += 1
     
-    # TO DO: Predicate when and what still needs work
     # Create Variant to HP assocations (Currently dependent on an existing VariantToDisease association)
     for mondo_id, hp_terms in mondo_to_hp.items():
         for hp_id in hp_terms:
@@ -646,7 +566,7 @@ while (row := koza_app.get_row()) is not None:
                     object=hp_id,
                     primary_knowledge_source="infores:clinvar",
                     aggregator_knowledge_source=["infores:monarchinitiative"],
-                    knowledge_level=KnowledgeLevelEnum.knowledge_assertion,
+                    knowledge_level=KnowledgeLevelEnum.observation,
                     agent_type=AgentTypeEnum.manual_agent,
                 )
             )
@@ -668,22 +588,5 @@ while (row := koza_app.get_row()) is not None:
     
     for m_id, hps in mondo_to_hp.items():
         dis_hp_counts[len(hps)] += 1
-    
 
     koza_app.write(*entities)
-
-
-# This won't actually will be printed, but would be nice to keep track of in a stats file or something   
-print("- No records {}".format(no_record))
-print("- With records {}".format(with_record))
-print("- VariantsToDisease {}".format(format(var_to_diss, ',')))
-print("")
-print("-Variants added {}".format(format(vars_added, ',')))
-print("-Variant to gene edges {}".format(format(var2gene_added, ',')))
-print("-Variant to disease edges {}".format(format(var2dis_added, ',')))
-print("-Variant to hp edges {}".format(format(var2hp_added, ',')))
-for k, v in map_stats.items():
-    print("- {} --> mondo_id , {}".format(k, format(v, ',')))
-    
-for k, v in dis_hp_counts.items():
-    print("- HP Associations {}, Number of cases {}".format(k, v))
