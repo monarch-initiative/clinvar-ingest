@@ -79,22 +79,22 @@ def test_case1_row():
 def test_case2_row():
     row = {
         'CHROM':'1',
-        'POS':'964512',
-        'ID':'916564',
-        'REF':'C',
+        'POS':'171636092',
+        'ID':'2505295',
+        'REF':'T',
         'ALT':'A',
         'QUAL':'.',
         'FILTER':'.',
         'AF_ESP':'.',
         'AF_EXAC':'.',
         'AF_TGP':'.',
-        'ALLELEID':'904889',
-        'CLNDN':'Tracheoesophageal_fistula',
+        'ALLELEID':'2670262',
+        'CLNDN':'Glaucoma_of_childhood',
         'CLNDNINCL':'.',
-        'CLNDISDB':'Human_Phenotype_Ontology:HP:0002575,MONDO:MONDO:0008586,MeSH:D014138,MedGen:C0040588,OMIM:189960,Orphanet:1199',
+        'CLNDISDB':'Human_Phenotype_Ontology:HP:0001087,MONDO:MONDO:0020367,MedGen:C2981140,Orphanet:98977',
         'CLNDISDBINCL':'.',
-        'CLNHGVS':'NC_000001.11:g.964512C>A',
-        'CLNREVSTAT':'no_assertion_criteria_provided',
+        'CLNHGVS':'NC_000001.11:g.171636092T>A',
+        'CLNREVSTAT':'reviewed_by_expert_panel',
         'CLNSIG':'Likely_pathogenic',
         'CLNSIGCONF':'.',
         'CLNSIGINCL':'.',
@@ -102,7 +102,7 @@ def test_case2_row():
         'CLNVCSO':'SO:0001483',
         'CLNVI':'.',
         'DBVARID':'.',
-        'GENEINFO':'KLHL17:339451',
+        'GENEINFO':'MYOC:4653',
         'MC':'SO:0001583|missense_variant',
         'ONCDN':'.',
         'ONCDNINCL':'.',
@@ -112,8 +112,8 @@ def test_case2_row():
         'ONCINCL':'.',
         'ONCREVSTAT':'.',
         'ONCCONF':'.',
-        'ORIGIN':'32',
-        'RS':'756054473',
+        'ORIGIN':'1',
+        'RS':'.',
         'SCIDN':'.',
         'SCIDNINCL':'.',
         'SCIDISDB':'.',
@@ -124,35 +124,35 @@ def test_case2_row():
             }
     return row
 
-# Single record, Single mondoID, 3 HPO terms, Single gene
+# Two records, Two mondoIDs, 2 HPO terms, Single gene
 @pytest.fixture
 def test_case3_row():
     row = {
-        'CHROM':'1',
-        'POS':'1233041',
-        'ID':'666963',
+        'CHROM':'2',
+        'POS':'202464950',
+        'ID':'8797',
         'REF':'C',
-        'ALT':'T',
+        'ALT':'G',
         'QUAL':'.',
         'FILTER':'.',
         'AF_ESP':'.',
         'AF_EXAC':'.',
         'AF_TGP':'.',
-        'ALLELEID':'654170',
-        'CLNDN':'Spondyloepiphyseal_dysplasia',
+        'ALLELEID':'23836',
+        'CLNDN':'Pulmonary_arterial_hypertension|Pulmonary_hypertension,_primary,_1',
         'CLNDNINCL':'.',
-        'CLNDISDB':'Human_Phenotype_Ontology:HP:0002655,Human_Phenotype_Ontology:HP:0002776,Human_Phenotype_Ontology:HP:0005893,MONDO:MONDO:0016761,MedGen:C0038015,Orphanet:253',
+        'CLNDISDB':'Human_Phenotype_Ontology:HP:0002092,Human_Phenotype_Ontology:HP:0006546,MONDO:MONDO:0015924,MeSH:D000081029,MedGen:C2973725,Orphanet:182090|MONDO:MONDO:0024533,MedGen:C4552070,OMIM:178600,Orphanet:422',
         'CLNDISDBINCL':'.',
-        'CLNHGVS':'NC_000001.11:g.1233041C>T',
-        'CLNREVSTAT':'criteria_provided,_single_submitter',
-        'CLNSIG':'Likely_pathogenic',
+        'CLNHGVS':'NC_000002.12:g.202464950C>G',
+        'CLNREVSTAT':'reviewed_by_expert_panel',
+        'CLNSIG':'Pathogenic',
         'CLNSIGCONF':'.',
         'CLNSIGINCL':'.',
         'CLNVC':'single_nucleotide_variant',
         'CLNVCSO':'SO:0001483',
-        'CLNVI':'.',
+        'CLNVI':'ClinGen:CA278072|OMIM:600799.0003',
         'DBVARID':'.',
-        'GENEINFO':'B3GALT6:126792',
+        'GENEINFO':'BMPR2:659',
         'MC':'SO:0001587|nonsense',
         'ONCDN':'.',
         'ONCDNINCL':'.',
@@ -163,7 +163,7 @@ def test_case3_row():
         'ONCREVSTAT':'.',
         'ONCCONF':'.',
         'ORIGIN':'1',
-        'RS':'1239366051',
+        'RS':'137852742',
         'SCIDN':'.',
         'SCIDNINCL':'.',
         'SCIDISDB':'.',
@@ -373,27 +373,28 @@ def test_case6_entities(test_case6_row, mock_koza):
 ### Our actual tests ###
 
 def test_case1(test_case1_entities):
-    assert len(test_case1_entities) == 3 # SequenceVariant, VariantToDisease, VariantToGene
+    assert len(test_case1_entities) == 3 # SequenceVariant, VariantToGene. VariantToDisease
 
 def test_case2(test_case2_entities):
-    assert len(test_case2_entities) == 4 # SequenceVariant, VariantToDisease, VariantToGene, VariantToPhenotype
+    assert len(test_case2_entities) == 4 # SequenceVariant, VariantToGene, VariantToDisease, VariantToPhenotype
 
 def test_case3(test_case3_entities):
-    assert len(test_case3_entities) == 6 # SequenceVariant, VariantToDisease, VariantToGene, VariantToPhenotype, VariantToPhenotype, VariantToPhenotype
+    assert len(test_case3_entities) == 5 # SequenceVariant,  VariantToGene, VariantToDisease, VariantToPhenotype, VariantToPhenotype
     assert len([association for association in test_case3_entities if isinstance(association, VariantToPhenotypicFeatureAssociation)]) == 2
+    assert test_case3_entities[2].object == "MONDO:0015924" # Two potential mondo ids are listed in the records
 
 def test_case4(test_case4_entities):
-    assert len(test_case4_entities) == 3 # SequenceVariant, VariantToDisease, VariantToGene
+    assert len(test_case4_entities) == 3 # SequenceVariant, VariantToGene, VariantToDisease
     assert test_case4_entities[2].object == "MONDO:0100283" # Multiple mondoids are available and this is the one that should be chosen
 
 def test_case5(test_case5_entities):
-    assert len(test_case5_entities) == 5 # SequenceVariant, VariantToDisease, VariantToGene, VariantToPhenotype1, VariantToPhenotype2
+    assert len(test_case5_entities) == 5 # SequenceVariant, VariantToGene, VariantToDisease, VariantToPhenotype1, VariantToPhenotype2
     assert test_case5_entities[2].object == "MONDO:0015924" # Multiple mondoids are available and this is the one that should be chosen
     assert len([association for association in test_case5_entities if isinstance(association, VariantToPhenotypicFeatureAssociation)]) == 2
 
 def test_case6(test_case6_entities):
-    assert len(test_case6_entities) == 9 # SequenceVariant, VariantToDisease, VariantToGene1, VariantToGene2, VariantToPhenotype_x_5 
-    assert test_case6_entities[2].object == "MONDO:0019118" # Multiple mondoids are available and this is the one that should be chosen
+    assert len(test_case6_entities) == 9 # SequenceVariant, VariantToGene1, VariantToGene2, VariantToDisease, VariantToPhenotype_x_5 
+    assert test_case6_entities[3].object == "MONDO:0019118" # Multiple mondoids are available and this is the one that should be chosen
     assert len([association for association in test_case6_entities if isinstance(association, VariantToGeneAssociation)]) == 2
     assert len([association for association in test_case6_entities if isinstance(association, VariantToPhenotypicFeatureAssociation)]) == 5
 
