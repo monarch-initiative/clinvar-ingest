@@ -9,6 +9,11 @@ delimiter: "\t"
 files:
   - "./data/clinvar.tsv"
 
+## For hgnc gene id pre conversion (for development purposes only)
+##depends_on:
+##  - "./src/clinvar_ingest/hgnc_from_symbol.yaml"
+##  - "./src/clinvar_ingest/hgnc_from_name.yaml"
+
 
 #################################################################################################
 ### file_archive is typically optional, but required if:                                      ###

@@ -335,25 +335,23 @@ def map_mondo_to_hp(group_info, disease_ids):
     return mondo_to_hp
 
 
-########################################################################################
-### Pipeline is to first create a variant to record(s) map {variantid:[{},{},{}...]} ###
+###############################
+### Ingest pipeline / steps ###
 
-### Then second is to create a disease id to mondo id map in the form of...
-### map_to_mondo --> {"OMIM:123":"MONDO:123", ...}.
+### First, create a variant to record(s) map {variantid:[{},{},{}...]}
+
+### Second, create a disease id to mondo id map in the form of... map_to_mondo --> {"OMIM:123":"MONDO:123", ...}
 ### where the key (disease id) is from the sources found within the sssom and medgen files
-
 ### The map_to_mondo is able to handle a few different types of data
 ### Orphanet, OMIM, Mondo, MedGen, and some MeSH for this data set 
 
-### Then we attempt to map all disease ids found within any variant back to this map (map_to_mondo).
-### If MONDO is found within the id name and it isn't found in the map, then it is included anyways.
-### This results in only making variantToDisease associations if the disease id is found in our map / is a mondo id.
-
-### Map disease id --> mondo id
-### Review status term of record --> stars determines if sequencevariant node is made in addition to
-### variant-->gene, variant-->disease, and variant-->phenotype edge creation...
-### Can use 0,1,2,3,4 star mapping min to get different results (see review_star_map below)
-
+### Third, loop through each variant within the vcf...
+###  - Pull all variant records
+###  - Pull out records that pass review star minimum criteria 
+###  - Map relevant record(s) medGen disease id(s) back to mondo id(s)
+###  - Match reported vcf disease/hpo group(s) back to relevant records via disease id
+###  - Make SequenceVariant node, variant-->gene edges, variant-->disease edges, variant-->hpo edges
+###  - Write biolink certified nodes/edges via koza app
 
 koza_app = get_koza_app("clinvar_variant")
 
@@ -412,6 +410,14 @@ predicate_map = {"Pathogenic":CAUSES,
                 #  "protective":RELATED_TO,
                 #  "risk factor":RELATED_TO} # PREDESPOSES_TO_CONDITION (Can alter predicate here)
 
+## Allows us to convert to hgnc (before merge step. Only used for develpoment purposes)
+##hgnc_df = pd.read_csv("./data/hgnc_complete_set.txt", sep='\t', header=0)
+##symbol_to_hgnc = {sym:hgnc_id for sym, hgnc_id in zip(list(hgnc_df["symbol"]), list(hgnc_df["hgnc_id"]))}
+##name_to_hgnc = {name:hgnc_id for name, hgnc_id in zip(list(hgnc_df["name"]), list(hgnc_df["hgnc_id"]))}
+
+##print("- Symbol to hgnc map {}".format(format(len(symbol_to_hgnc), ',')))
+##print("- Name to hgnc map {}".format(format(len(name_to_hgnc), ',')))
+
 
 # File paths to acessory data
 sub_path = "./data/submission_summary.txt.gz"
@@ -448,8 +454,8 @@ vars_added = 0
 var2gene_added = 0
 var2dis_added = 0
 var2hp_added = 0
-
 tot_count = 0
+
 while (row := koza_app.get_row()) is not None:
     # Code to transform each row of data
     # For more information, see https://koza.monarchinitiative.org/Ingests/transform
@@ -516,7 +522,16 @@ while (row := koza_app.get_row()) is not None:
     entities.append(seq_var)
     vars_added += 1
     
-    # Make Gene Associations
+
+    # # Make Gene Associations (If we want to pre-convert ncbi geneIds to hgnc geneIds... )
+    # # This is done at the merge step so not necessary here, but a good initial sanity check to ensure majority of genes are being converted
+    # for gene_id, gene_symbol in zip(gene_ids, gene_symbols):
+    #     if gene_symbol in symbol_to_hgnc:
+    #         gene_id = symbol_to_hgnc[gene_symbol]
+    #     elif gene_symbol in name_to_hgnc:
+    #         gene_id = name_to_hgnc[gene_symbol]
+
+    # Make variant to gene associations
     for gene_id in gene_ids:
         entities.append(
             VariantToGeneAssociation(
@@ -532,7 +547,7 @@ while (row := koza_app.get_row()) is not None:
         )
         var2gene_added += 1
     
-    # Make disease associations
+    # Make variant to disease associations
     for dis_id, predicate in disease_predicates.items():
         
         ### predicate is a dictionary of possible predicate values (in case a variant has multiple status's? (not sure possible...))
@@ -555,7 +570,7 @@ while (row := koza_app.get_row()) is not None:
             )
             var2dis_added += 1
     
-    # Create Variant to HP assocations (Currently dependent on an existing VariantToDisease association)
+    # Make variant to HPO assocations (Currently dependent on an existing VariantToDisease association)
     for mondo_id, hp_terms in mondo_to_hp.items():
         for hp_id in hp_terms:
             entities.append(
@@ -572,21 +587,4 @@ while (row := koza_app.get_row()) is not None:
             )
             var2hp_added += 1
     
-    # Stats here
-    #dis_counts[len(hp_terms)] += 1
-    
-    # Test case with 11 hp terms
-    # for dis, hp_terms in mondo_to_hp.items():
-    #     if len(hp_terms) == 11:
-    #         print(dis, hp_terms)
-    #         for rr in var_records[varid]:
-    #             print(rr)
-    
-    # Record keeping
-    if len(mondo_to_hp) > 0:
-        var_to_diss += len(mondo_to_hp)
-    
-    for m_id, hps in mondo_to_hp.items():
-        dis_hp_counts[len(hps)] += 1
-
     koza_app.write(*entities)
