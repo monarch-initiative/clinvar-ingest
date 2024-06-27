@@ -87,8 +87,8 @@ def make_mondo_map(sssom_path):
                 # A small amount of objects will map to more than one mondo id (hence the dict structure)
                 map_to_mondo[obj_id].update({subj_id:''})
 
-    print("- Total mappings produced {}".format(len(map_to_mondo)))
-    print("- Multi mapping objects found {}".format(format(dups, ',')))
+    ##print("- Total mappings produced {}".format(len(map_to_mondo)))
+    ##print("- Multi mapping objects found {}".format(format(dups, ',')))
     
     # Lastly, add in bannana and mondo_id mapping to self
     mondo_set = {k.split(":")[-1]:'' for kv in map_to_mondo for k in map_to_mondo[kv]}
@@ -126,8 +126,8 @@ def make_medgen_to_mondo_map(medgen_path):
                     map_to_mondo[mdg_id].update({dis_id:''})
     
     multi_mappers = len([k for k, v in map_to_mondo.items() if len(v) > 1])
-    print("- Total mappings found {}".format(format(len(map_to_mondo), ',')))
-    print("- MedGen ids that map to multiple mondo {}".format(format(multi_mappers, ',')))
+    ##print("- Total mappings found {}".format(format(len(map_to_mondo), ',')))
+    ##print("- MedGen ids that map to multiple mondo {}".format(format(multi_mappers, ',')))
     return map_to_mondo
 
 
@@ -212,6 +212,7 @@ def variant_records_to_disease(record_list, review_star_map, map_to_mondo, predi
             if len(mondo_ids) == 0:
                 continue
             
+            # Create disease id to predicate mapping (for ingest and original)
             for d in mondo_ids:
                 dis.update({d:''})
                 if d not in preds:
@@ -238,7 +239,8 @@ def variant_records_to_disease(record_list, review_star_map, map_to_mondo, predi
                 # Can't map this one back
                 if len(mondo_ids) == 0:
                     continue
-
+                
+                # Create disease id to predicate mapping (for ingest and original)
                 for d in mondo_ids:
                     dis.update({d:''})
                     if d not in preds:
@@ -247,7 +249,7 @@ def variant_records_to_disease(record_list, review_star_map, map_to_mondo, predi
                     preds[d].update({mapped_predicate:''})
                     org_preds[d].update({org_predicate:''})
                     mapped_terms += 1
-                    #print(rec["SubmittedPhenotypeInfo"], rec["ReportedPhenotypeInfo"])
+                    ##print(rec["SubmittedPhenotypeInfo"], rec["ReportedPhenotypeInfo"])
     
     return dis, preds, org_preds
    
@@ -301,7 +303,7 @@ def map_CLNDISDB_to_mondo(parse_results, map_to_mondo, map_stats={"MONDO":0, "me
             elif gterm in map_to_mondo:
                 mondo_ids += list(map_to_mondo[gterm].keys())
                 
-                ### STATS KEEPING
+                ### STATS KEEPING for different submission ids
                 for k in map_stats:
                     if k in gterm:
                         map_stats[k] += 1
@@ -355,23 +357,27 @@ def map_mondo_to_hp(group_info, disease_ids):
 
 koza_app = get_koza_app("clinvar_variant")
 
-# Variant to gene
+# Variant to gene predicate
 IS_SEQUENCE_VARIANT_OF = "biolink:is_sequence_variant_of"
 
-# Variant to disease
+# Variant to disease 
 CAUSES = "biolink:causes"
 ASSOCIATED_WITH = "biolink:associated_with_increased_likelihood_of"
-RELATED_TO = "biolink:related_to"
 
 # Variant to phenotype
 CONTRIBUTES_TO = "biolink:contributes_to" 
 
+pred_to_negated = {CAUSES:False,
+                   ASSOCIATED_WITH:False,
+                   CONTRIBUTES_TO:False}
+
 
 # Manually curated terms derived from files for data modeling purposes
+# https://www.ncbi.nlm.nih.gov/clinvar/docs/review_status/
 review_star_map = {"practice_guideline":4,
                    "reviewed_by_expert_panel":3,
                    "criteria_provided,_multiple_submitters,_no_conflicts":2,
-                   "criteria_provided,_conflicting_classifications":2,
+                   "criteria_provided,_conflicting_classifications":1,
                    "no_classifications_from_unflagged_records":1,
                    "criteria_provided,_single_submitter":1,
                    "no_assertion_criteria_provided":1,
@@ -428,26 +434,19 @@ medgen_path = "./data/MedGenIDMappings.txt.gz"
 
 # Map records to each clinvar variant id
 var_records = make_variant_record_map(sub_path)
-print("- Var records read in {}".format(format(len(var_records), ',')))
 
 # Make general map back to mondo terms for things that are in our vcf / submission_summary files
 map_to_mondo = make_mondo_map(sssom_path)
-print("- mondo sssom read in {}".format(format(len(map_to_mondo), ',')))
 
 # Make medgen to mondo map
 medgen_to_mondo = make_medgen_to_mondo_map(medgen_path)
 
 # Merge the two maps we made into one by updatating one dictionary with the other
-print("- SSSOM mappings {}".format(format(len(map_to_mondo), ',')))
-print("- MedGen mappings {}".format(format(len(medgen_to_mondo), ',')))
 map_to_mondo.update(medgen_to_mondo)
-print("- Combined mappings {}".format(format(len(map_to_mondo), ',')))
 
-# Koza app loop through each line of the file as a dictionary 
+
 no_record = 0
 with_record = 0
-var_to_diss = 0
-dis_hp_counts = {i:0 for i in range(0, 50)}
 map_stats = {"MONDO":0, "mesh":0, "OMIM":0, "Orphanet":0, "MedGen":0}
 
 vars_added = 0
@@ -461,9 +460,9 @@ while (row := koza_app.get_row()) is not None:
     # For more information, see https://koza.monarchinitiative.org/Ingests/transform
 
     # Progress tracking
-    tot_count += 1
-    if tot_count % 100000 == 0:
-        print("- Processed {}".format(format(tot_count, ',')))
+    ##tot_count += 1
+    ##if tot_count % 100000 == 0:
+    ##    print("- Processed {}".format(format(tot_count, ',')))
 
     # Graph level objects we need koza to write
     entities = []
@@ -503,7 +502,7 @@ while (row := koza_app.get_row()) is not None:
     mondo_to_hp = map_mondo_to_hp(diss_info, disease_ids) #--> {disease_id:[HP:123, HP:234, ...], }
 
     # This means we were not able to make a variant --> disease association. 
-    # Therefore we do not want to add any information to the graph (currently...)
+    # Therefore we do not want to add any information to the graph
     if len(mondo_to_hp) == 0:
         continue
 
@@ -515,14 +514,10 @@ while (row := koza_app.get_row()) is not None:
                     has_gene=gene_ids,
                     in_taxon=["NCBITaxon:9606"],
                     in_taxon_label="Homo sapiens")
-                    # type? could this be a SO term?
-                    # has_bioligical_sequence  do we want it? not so sure
-                    # #     )
 
     entities.append(seq_var)
     vars_added += 1
     
-
     # # Make Gene Associations (If we want to pre-convert ncbi geneIds to hgnc geneIds... )
     # # This is done at the merge step so not necessary here, but a good initial sanity check to ensure majority of genes are being converted
     # for gene_id, gene_symbol in zip(gene_ids, gene_symbols):
@@ -554,6 +549,7 @@ while (row := koza_app.get_row()) is not None:
         og_preds = sorted(list(org_predicates[dis_id].keys()))
 
         for pred in list(predicate.keys()):
+            negated = pred_to_negated[pred]
             entities.append(
                 VariantToDiseaseAssociation(
                     id=str(uuid.uuid4()),
@@ -561,6 +557,7 @@ while (row := koza_app.get_row()) is not None:
                     predicate=pred,
                     qualifiers=[row["CLNREVSTAT"]],
                     object=dis_id,
+                    negated=negated, 
                     original_predicate=":".join(og_preds), # Pulled from the submission_summary file
                     primary_knowledge_source="infores:clinvar",
                     aggregator_knowledge_source=["infores:monarchinitiative"],
