@@ -38,8 +38,8 @@ def make_variant_record_map(submission_path):
                 var_records[varid].append(rec)
                 rec_count += 1
     
-    print("- {} variants read into memory across {} records".format(format(len(var_records), ','), 
-                                                                    format(rec_count, ',')))
+    ##print("- {} variants read into memory across {} records".format(format(len(var_records), ','), 
+    ##                                                                format(rec_count, ',')))
     return var_records
 
 
@@ -427,8 +427,6 @@ predicate_map = {"Pathogenic":CAUSES,
 
 # File paths to acessory data
 sub_path = "./data/submission_summary.txt.gz"
-vcf_tsv_path = "./data/clinvar.tsv"
-vcf_path = "./data/clinvar.vcf"
 sssom_path = "./data/mondo.sssom.tsv"
 medgen_path = "./data/MedGenIDMappings.txt.gz"
 
@@ -444,7 +442,7 @@ medgen_to_mondo = make_medgen_to_mondo_map(medgen_path)
 # Merge the two maps we made into one by updatating one dictionary with the other
 map_to_mondo.update(medgen_to_mondo)
 
-
+# Record keeping variables 
 no_record = 0
 with_record = 0
 map_stats = {"MONDO":0, "mesh":0, "OMIM":0, "Orphanet":0, "MedGen":0}
