@@ -5,3 +5,16 @@
 ---
 - url: https://ftp.ncbi.nlm.nih.gov/pub/clinvar/vcf_GRCh38/clinvar.vcf.gz
   local_name: data/clinvar.vcf.gz
+
+- url: https://ftp.ncbi.nlm.nih.gov/pub/clinvar/tab_delimited/submission_summary.txt.gz
+  local_name: data/submission_summary.txt.gz
+
+- url: https://data.monarchinitiative.org/mappings/latest/mondo.sssom.tsv
+  local_name: data/mondo.sssom.tsv
+
+- url: https://ftp.ncbi.nlm.nih.gov/pub/medgen/MedGenIDMappings.txt.gz
+  local_name: data/MedGenIDMappings.txt.gz
+
+## hgnc geneId conversion file (this is only used for development purposes)
+##- url: https://g-a8b222.dd271.03c0.data.globus.org/pub/databases/genenames/hgnc/tsv/hgnc_complete_set.txt
+##  local_name: data/hgnc_complete_set.txt
