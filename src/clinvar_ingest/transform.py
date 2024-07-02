@@ -386,7 +386,7 @@ review_star_map = {"practice_guideline":4,
                    "flagged_submission":0, # ??? Conflicting information is what the really means...
                    ".":0} #Means that there is no data submitted for germline classification"
 
-var2disease_star_min = 3 ### 3 is reviewed by expert panel and above (not sure about practice guidline yet...)
+var2disease_star_min = 3 ### 3 is reviewed by expert panel and above
 
 # Manually curated to help determine predicate
 # For using submission_summary file (pulling terms from the clinicial significance column)
@@ -471,7 +471,10 @@ while (row := koza_app.get_row()) is not None:
     crev = row["CLNREVSTAT"]
     ginfo = row["GENEINFO"]
     raw_diss_info = row["CLNDISDB"]
-    
+    so_info = [v.split("|")[0] for v in row["MC"].split(",") if "SO:" in v] # Pull out sequence ontology term(s) ### Example MC column SO:0001575|splice_donor_variant,SO:0001587|nonsense
+    ### Note, that the Sequence ontology term could be derived from the "CLNVCSO" vcf column as well, however the terms listed in that column are much less specific and are not actually particularly useful (Too broad)
+    ### The terms listed within the MC column are far more specific to the effect(s) a variant will have on any given gene it overlaps, thus making it the preffered choice. 
+
     # No record info means we don't want to include
     if varid not in var_records:
         no_record += 1
@@ -511,7 +514,8 @@ while (row := koza_app.get_row()) is not None:
                     xref=["DBSNP:{}".format(row["RS"])],
                     has_gene=gene_ids,
                     in_taxon=["NCBITaxon:9606"],
-                    in_taxon_label="Homo sapiens")
+                    in_taxon_label="Homo sapiens",
+                    type=so_info)
 
     entities.append(seq_var)
     vars_added += 1

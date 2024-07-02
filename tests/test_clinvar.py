@@ -326,6 +326,55 @@ def test_case6_row():
     return row
     #{'MONDO:0019118': ['HP:0000556', 'HP:0007736', 'HP:0007910', 'HP:0007974', 'HP:0007982']}
 
+# Multiple records, Single HPO, Single gene, Multiple MC info
+@pytest.fixture
+def test_case7_row():
+    row = {
+    'CHROM':'1',
+    'POS':'173911974',
+    'ID':'654211',
+    'REF':'T',
+    'ALT':'G',
+    'QUAL':'.',
+    'FILTER':'.',
+    'AF_ESP':'.',
+    'AF_EXAC':'1e-05',
+    'AF_TGP':'.',
+    'ALLELEID':'627126',
+    'CLNDN':'not_provided|Hereditary_antithrombin_deficiency',
+    'CLNDNINCL':'.',
+    'CLNDISDB':'MedGen:C3661900|Human_Phenotype_Ontology:HP:0001976,MONDO:MONDO:0013144,MedGen:C0272375,OMIM:613118,Orphanet:82',
+    'CLNDISDBINCL':'.',
+    'CLNHGVS':'NC_000001.11:g.173911974T>G',
+    'CLNREVSTAT':'reviewed_by_expert_panel',
+    'CLNSIG':'Likely_pathogenic',
+    'CLNSIGCONF':'.',
+    'CLNSIGINCL':'.',
+    'CLNVC':'single_nucleotide_variant',
+    'CLNVCSO':'SO:0001483',
+    'CLNVI':'.',
+    'DBVARID':'.',
+    'GENEINFO':'SERPINC1:462',
+    'MC':'SO:0001583|missense_variant,SO:0001627|intron_variant',
+    'ONCDN':'.',
+    'ONCDNINCL':'.',
+    'ONCDISDB':'.',
+    'ONCDISDBINCL':'.',
+    'ONC':'.',
+    'ONCINCL':'.',
+    'ONCREVSTAT':'.',
+    'ONCCONF':'.',
+    'ORIGIN':'1',
+    'RS':'765445413',
+    'SCIDN':'.',
+    'SCIDNINCL':'.',
+    'SCIDISDB':'.',
+    'SCIDISDBINCL':'.',
+    'SCIREVSTAT':'.',
+    'SCI':'.',
+    'SCIINCL':'.',
+    }
+    return row
 
 
 ####################################################################
@@ -367,6 +416,11 @@ def test_case6_entities(test_case6_row, mock_koza):
                      test_case6_row,
                      TRANSFORM_SCRIPT)
 
+@pytest.fixture
+def test_case7_entities(test_case7_row, mock_koza):
+    return mock_koza(INGEST_NAME,
+                     test_case7_row,
+                     TRANSFORM_SCRIPT)
 
 
 ########################
@@ -397,6 +451,11 @@ def test_case6(test_case6_entities):
     assert test_case6_entities[3].object == "MONDO:0019118" # Multiple mondoids are available and this is the one that should be chosen
     assert len([association for association in test_case6_entities if isinstance(association, VariantToGeneAssociation)]) == 2
     assert len([association for association in test_case6_entities if isinstance(association, VariantToPhenotypicFeatureAssociation)]) == 5
+
+def test_case7(test_case7_entities):
+    assert len(test_case7_entities) == 4 # SequenceVariant, VariantToGene, VariantToDisease, VariantToPhenotype 
+    assert test_case7_entities[2].object == "MONDO:0013144" # Multiple records are available and we want to make sure we choose the proper on
+    assert test_case7_entities[0].type == ["SO:0001583", "SO:0001627"]
 
 
 # TO DO: Tests for proper predicates? Test rows for variants that are not of review status 3 stars or above? 

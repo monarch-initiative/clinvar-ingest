@@ -76,6 +76,7 @@ node_properties:
   - id
   - name
   - category
+  - type
 
   
   # category
