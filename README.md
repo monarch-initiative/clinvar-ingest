@@ -4,6 +4,28 @@
 
 modular ingest for clinvar variants. Makes variant nodes and then creates associations based on the relative information (phenotype, disease, gene, pathogenicity)
 
+## Ingest files and how nodes and edges are generated
+Two files downloaded from clinvar are leveraged in this ingest
+- clinvar.vcf which contains a single line per clinvar variant with each variant's associated terms reported in the INFO column and grouped by which submission record(s) they originated from. https://ftp.ncbi.nlm.nih.gov/pub/clinvar/vcf_GRCh38  (hg38 genome version)
+- submission_summary.txt contains a single line per variant record. These records contain in depth information about the variant in question that we can leverage in the ingest process. Multiple records often exist per one variant. https://ftp.ncbi.nlm.nih.gov/pub/clinvar/tab_delimited/
+
+Variant nodes (SequenceVariant)
+- SequenceVariant nodes are created from clinvar variants that are deemed Pathogenic or Likely Pathogenic. Additionally, only variants that have a clinvar review status of 3 or more stars (4 maximum) will be included. This subset corresponds to the most credible set of variants that are pathogenic within the clinvar dataset.
+
+Variant → Disease edges (VariantToDiseaseAssociation)
+ - Disease ids are derived from the ReportedPhenotypeInfo column within the submission_summary.txt file. This column consists of medgen ids that we then map to a mondo id. Alternatively, if a mondo id cannot be found, then the SubmittedPhenotypeInfo column will be used instead. If neither column maps to a mondo id then no edge will be made.
+ - Predicates are derived from the ClinicalSignificance column within the submission_summary.txt file. Currently only Pathogenic and Likely pathogenic are included as “causes” and “associated_with_increased_likelihood_of” respectively.
+
+Variant → Phenotype edges (VariantToPhenotypicFeatureAssociation)
+- These edges are only created if a Variant → Disease edge can be made. The phenotype terms themselves are derived from the INFO column of the clinvar.vcf file. The information within this column is reported as groups of terms that map back to an individual record(s) from the submission_summary.txt file. Any group of terms that contains the disease id from the Variant → Disease edge will have Variant → Phenotype edges created for all reported Human phenotype ontology terms reported within the group.
+- The predicate for these edges in "contributes_to"
+
+Variant → Gene edges (VariantToGeneAssociation)
+- These edges are created only if a Variant → Disease edge can be made. Gene symbols are derived from the INFO column within the clinvar.vcf file and gene symbols are mapped to ncbi genes.
+- The predicate is_sequence_variant_of is used. Sequence ontology terms are also reported within the INFO column pertaining to the variants "molecular consequence" (MC subfield within INFO). These terms are recored in the "type" slot for the SequenceVariant node that is created (https://biolink.github.io/biolink-model/type/)
+
+
+
 ## Requirements
 
 - Python >= 3.10
