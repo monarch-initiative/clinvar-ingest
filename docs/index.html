@@ -290,6 +290,17 @@
         
       
       
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  <span class="md-ellipsis">
+    clinvar-ingest Report
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
       <a href="." class="md-nav__link md-nav__link--active">
         
   
@@ -299,6 +310,43 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#nodes-report" class="md-nav__link">
+    <span class="md-ellipsis">
+      Nodes Report
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#edges-report" class="md-nav__link">
+    <span class="md-ellipsis">
+      Edges Report
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
       
     </li>
   
@@ -324,6 +372,32 @@
     
   
   
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#nodes-report" class="md-nav__link">
+    <span class="md-ellipsis">
+      Nodes Report
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#edges-report" class="md-nav__link">
+    <span class="md-ellipsis">
+      Edges Report
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
 </nav>
                   </div>
                 </div>
@@ -341,6 +415,84 @@
 
 
 <h1 id="clinvar-ingest-report">clinvar-ingest Report</h1>
+<h2 id="nodes-report">Nodes Report</h2>
+<table>
+<thead>
+<tr>
+<th>category</th>
+<th>prefix</th>
+<th>count_star()</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>biolink:SequenceVariant</td>
+<td>CLINVAR</td>
+<td>10000</td>
+</tr>
+</tbody>
+</table>
+<h2 id="edges-report">Edges Report</h2>
+<table>
+<thead>
+<tr>
+<th>category</th>
+<th>subject_prefix</th>
+<th>predicate</th>
+<th>original_predicate</th>
+<th>qualifiers</th>
+<th>object_prefix</th>
+<th>count_star()</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>biolink:VariantToDiseaseAssociation</td>
+<td>CLINVAR</td>
+<td>biolink:associated_with_increased_likelihood_of</td>
+<td>Likely pathogenic</td>
+<td>reviewed_by_expert_panel</td>
+<td>MONDO</td>
+<td>1728</td>
+</tr>
+<tr>
+<td>biolink:VariantToDiseaseAssociation</td>
+<td>CLINVAR</td>
+<td>biolink:causes</td>
+<td>Pathogenic</td>
+<td>practice_guideline</td>
+<td>MONDO</td>
+<td>23</td>
+</tr>
+<tr>
+<td>biolink:VariantToDiseaseAssociation</td>
+<td>CLINVAR</td>
+<td>biolink:causes</td>
+<td>Pathogenic</td>
+<td>reviewed_by_expert_panel</td>
+<td>MONDO</td>
+<td>8249</td>
+</tr>
+<tr>
+<td>biolink:VariantToGeneAssociation</td>
+<td>CLINVAR</td>
+<td>biolink:is_sequence_variant_of</td>
+<td></td>
+<td></td>
+<td>NCBIGene</td>
+<td>10749</td>
+</tr>
+<tr>
+<td>biolink:VariantToPhenotypicFeatureAssociation</td>
+<td>CLINVAR</td>
+<td>biolink:contributes_to</td>
+<td></td>
+<td></td>
+<td>HP</td>
+<td>159</td>
+</tr>
+</tbody>
+</table>
 
 
 
