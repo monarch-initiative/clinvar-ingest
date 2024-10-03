@@ -1,6 +1,6 @@
 category	subject_prefix	predicate	original_predicate	qualifiers	object_prefix	count_star()
-biolink:VariantToDiseaseAssociation	CLINVAR	biolink:associated_with_increased_likelihood_of	Likely pathogenic	reviewed_by_expert_panel	MONDO	1728
+biolink:VariantToDiseaseAssociation	CLINVAR	biolink:associated_with_increased_likelihood_of	Likely pathogenic	reviewed_by_expert_panel	MONDO	1755
 biolink:VariantToDiseaseAssociation	CLINVAR	biolink:causes	Pathogenic	practice_guideline	MONDO	23
-biolink:VariantToDiseaseAssociation	CLINVAR	biolink:causes	Pathogenic	reviewed_by_expert_panel	MONDO	8249
-biolink:VariantToGeneAssociation	CLINVAR	biolink:is_sequence_variant_of			NCBIGene	10749
-biolink:VariantToPhenotypicFeatureAssociation	CLINVAR	biolink:contributes_to			HP	159
+biolink:VariantToDiseaseAssociation	CLINVAR	biolink:causes	Pathogenic	reviewed_by_expert_panel	MONDO	8270
+biolink:VariantToGeneAssociation	CLINVAR	biolink:is_sequence_variant_of			NCBIGene	10801
+biolink:VariantToPhenotypicFeatureAssociation	CLINVAR	biolink:contributes_to			HP	170
