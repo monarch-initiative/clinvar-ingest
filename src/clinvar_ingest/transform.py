@@ -3,9 +3,29 @@ import gzip
 import pandas as pd
 #import matplotlib.pyplot as plt
 from collections import Counter
-
+from koza import KozaTransform
+from typing import Any, Dict, List
 from biolink_model.datamodel.pydanticmodel_v2 import *  # Replace * with any necessary data classes from the Biolink Model
-from koza.cli_utils import get_koza_app
+
+
+###############################
+### Ingest pipeline / steps ###
+
+### First, create a variant to record(s) map {variantid:[{},{},{}...]}
+
+### Second, create a disease id to mondo id map in the form of... map_to_mondo --> {"OMIM:123":"MONDO:123", ...}
+### where the key (disease id) is from the sources found within the sssom and medgen files
+### The map_to_mondo is able to handle a few different types of data
+### Orphanet, OMIM, Mondo, MedGen, and some MeSH for this data set 
+
+### Third, loop through each variant within the vcf...
+###  - Pull all variant records
+###  - Pull out records that pass review star minimum criteria
+###  - Map relevant record(s) medGen disease id(s) back to mondo id(s)
+###  - Match reported vcf disease/hpo group(s) back to relevant records via disease id
+###  - Make SequenceVariant node, variant-->gene edges, variant-->disease edges, variant-->hpo edges
+###  - Write biolink certified nodes/edges via koza app
+
 
 
 ### Create variant--> record mapping {variant_id:[record,...]}
@@ -336,27 +356,6 @@ def map_mondo_to_hp(group_info, disease_ids):
 
     return mondo_to_hp
 
-
-###############################
-### Ingest pipeline / steps ###
-
-### First, create a variant to record(s) map {variantid:[{},{},{}...]}
-
-### Second, create a disease id to mondo id map in the form of... map_to_mondo --> {"OMIM:123":"MONDO:123", ...}
-### where the key (disease id) is from the sources found within the sssom and medgen files
-### The map_to_mondo is able to handle a few different types of data
-### Orphanet, OMIM, Mondo, MedGen, and some MeSH for this data set 
-
-### Third, loop through each variant within the vcf...
-###  - Pull all variant records
-###  - Pull out records that pass review star minimum criteria 
-###  - Map relevant record(s) medGen disease id(s) back to mondo id(s)
-###  - Match reported vcf disease/hpo group(s) back to relevant records via disease id
-###  - Make SequenceVariant node, variant-->gene edges, variant-->disease edges, variant-->hpo edges
-###  - Write biolink certified nodes/edges via koza app
-
-koza_app = get_koza_app("clinvar_variant")
-
 # Variant to gene predicate
 IS_SEQUENCE_VARIANT_OF = "biolink:is_sequence_variant_of"
 
@@ -453,7 +452,7 @@ var2dis_added = 0
 var2hp_added = 0
 tot_count = 0
 
-while (row := koza_app.get_row()) is not None:
+def transform_record(koza: KozaTransform, record: dict[str, Any]):
     # Code to transform each row of data
     # For more information, see https://koza.monarchinitiative.org/Ingests/transform
 
@@ -466,21 +465,22 @@ while (row := koza_app.get_row()) is not None:
     entities = []
 
     # Values we need pull
-    varid = str(row["ID"])
-    clinical_significance = row["CLNSIG"]
-    crev = row["CLNREVSTAT"]
-    ginfo = row["GENEINFO"]
-    raw_diss_info = row["CLNDISDB"]
-    so_info = [v.split("|")[0] for v in row["MC"].split(",") if "SO:" in v] # Pull out sequence ontology term(s) ### Example MC column SO:0001575|splice_donor_variant,SO:0001587|nonsense
+    varid = str(record["ID"])
+    clinical_significance = record["CLNSIG"]
+    crev = record["CLNREVSTAT"]
+    ginfo = record["GENEINFO"]
+    raw_diss_info = record["CLNDISDB"]
+    so_info = [v.split("|")[0] for v in record["MC"].split(",") if "SO:" in v] # Pull out sequence ontology term(s) ### Example MC column SO:0001575|splice_donor_variant,SO:0001587|nonsense
     ### Note, that the Sequence ontology term could be derived from the "CLNVCSO" vcf column as well, however the terms listed in that column are much less specific and are not actually particularly useful (Too broad)
     ### The terms listed within the MC column are far more specific to the effect(s) a variant will have on any given gene it overlaps, thus making it the preffered choice. 
 
     # No record info means we don't want to include
     if varid not in var_records:
-        no_record += 1
-        continue
+        ##no_record += 1
+        return
     else:
-        with_record += 1
+        ##with_record += 1
+        dummy = 1
     
     # Make SequenceVariant (must first find genes that are associated with it to pass in)
     gene_ids, gene_symbols = make_genes_from_row(ginfo)
@@ -505,20 +505,20 @@ while (row := koza_app.get_row()) is not None:
     # This means we were not able to make a variant --> disease association. 
     # Therefore we do not want to add any information to the graph
     if len(mondo_to_hp) == 0:
-        continue
+        return
 
     # Start creating graph data starting with the variant itself
     seq_var = SequenceVariant(
-                    id="CLINVAR:{}".format(row["ID"]),
-                    name=row["CLNHGVS"],
-                    xref=["DBSNP:{}".format(row["RS"])],
+                    id="CLINVAR:{}".format(record["ID"]),
+                    name=record["CLNHGVS"],
+                    xref=["DBSNP:{}".format(record["RS"])],
                     has_gene=gene_ids,
                     in_taxon=["NCBITaxon:9606"],
                     in_taxon_label="Homo sapiens",
                     type=so_info)
 
     entities.append(seq_var)
-    vars_added += 1
+    ##vars_added += 1
     
     # # Make Gene Associations (If we want to pre-convert ncbi geneIds to hgnc geneIds... )
     # # This is done at the merge step so not necessary here, but a good initial sanity check to ensure majority of genes are being converted
@@ -542,7 +542,7 @@ while (row := koza_app.get_row()) is not None:
                 agent_type=AgentTypeEnum.manual_agent,
             )
         )
-        var2gene_added += 1
+        ##var2gene_added += 1
     
     # Make variant to disease associations
     for dis_id, predicate in disease_predicates.items():
@@ -557,7 +557,7 @@ while (row := koza_app.get_row()) is not None:
                     id=str(uuid.uuid4()),
                     subject=seq_var.id,
                     predicate=pred,
-                    qualifiers=[row["CLNREVSTAT"]],
+                    qualifiers=[record["CLNREVSTAT"]],
                     object=dis_id,
                     negated=negated, 
                     original_predicate=":".join(og_preds), # Pulled from the submission_summary file
@@ -567,7 +567,7 @@ while (row := koza_app.get_row()) is not None:
                     agent_type=AgentTypeEnum.manual_agent,
                 )
             )
-            var2dis_added += 1
+            ##var2dis_added += 1
     
     # Make variant to HPO assocations (Currently dependent on an existing VariantToDisease association)
     for mondo_id, hp_terms in mondo_to_hp.items():
@@ -584,6 +584,6 @@ while (row := koza_app.get_row()) is not None:
                     agent_type=AgentTypeEnum.manual_agent,
                 )
             )
-            var2hp_added += 1
+            ##var2hp_added += 1
     
-    koza_app.write(*entities)
+    koza.write(*entities)

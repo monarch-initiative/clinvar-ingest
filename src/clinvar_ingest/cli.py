@@ -5,7 +5,8 @@ from pathlib import Path
 
 import typer
 from kghub_downloader.download_utils import download_from_yaml
-from koza.cli_utils import transform_source
+#from koza.cli_utils import transform_source
+from koza import KozaRunner
 
 app = typer.Typer()
 logger = logging.getLogger(__name__)
@@ -40,13 +41,12 @@ def transform(
     """Run the Koza transform for clinvar-ingest."""
     typer.echo("Transforming data for clinvar-ingest...")
     transform_code = Path(__file__).parent / "transform.yaml"
-    transform_source(
-        source=transform_code,
-        output_dir=output_dir,
-        output_format="tsv",
-        row_limit=row_limit,
-        verbose=verbose,
-    )
+    config, runner = KozaRunner.from_config_file(str(transform_code), 
+                                                 output_dir=output_dir, 
+                                                 row_limit=row_limit,
+                                                 show_progress=True)
+
+    runner.run()
 
 
 if __name__ == "__main__":
