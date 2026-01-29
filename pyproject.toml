@@ -1,81 +1,52 @@
-[tool.poetry]
+[build-system]
+requires = ["hatchling", "uv-dynamic-versioning"]
+build-backend = "hatchling.build"
+
+[project]
 name = "clinvar_ingest"
-version = "0.0.0"
-description = "modular ingest for clinvar variants. Makes variant nodes and then creates associations based on the relative information (phenotype, disease, gene, pathogenicity)"
-authors = ["Aaron Odell <aaron@tislab.org>"]
+description = "Modular ingest for ClinVar variants. Creates variant nodes and associations for phenotype, disease, gene, and pathogenicity relationships."
+authors = [
+  {name = "Monarch Initiative", email = "info@monarchinitiative.org"},
+]
 license = "MIT"
+license-files = ["LICENSE"]
 readme = "README.md"
+requires-python = ">=3.10,<4.0"
+dynamic = ["version"]
 
-[tool.poetry.dependencies]
-python = "^3.10"
-importlib-metadata = ">=4.8.0"
-koza = ">=0.6.0"
-kghub-downloader = "=0.3.8"
-kgx = ">=2.4.0"
-biolink-model = "^4.2.0"
-duckdb = ">=0.10.2"
-loguru = "*"
-vcf-kit = "^0.2.9"
-numpy = "^1.26.4"
-torch = ">=2.6.0"
+dependencies = [
+  "koza>=2.0.0",
+  "kghub-downloader>=0.4.0",
+  "biolink-model>=4.0.0",
+  "duckdb>=0.10.2",
+  "cyvcf2>=0.31.0",
+]
 
-[tool.poetry.group.dev]
-optional = true
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=4.1.0",
+    "ruff>=0.4.8",
+]
 
-[tool.poetry.group.dev.dependencies]
-pytest = ">=8.1.1"
-mkdocs = ">=1.4"
-mkdocs-material = ">=9.5"
-mkdocs-macros-plugin = "*"
-black = "*"
-ruff = "*"
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
 
-[tool.poetry.scripts]
-ingest = "clinvar_ingest.cli:app"
+[tool.hatch.version]
+source = "uv-dynamic-versioning"
 
-[tool.poetry-dynamic-versioning]
-enable = true
+[tool.uv-dynamic-versioning]
 vcs = "git"
 style = "pep440"
+fallback-version = "0.0.0"
 
-[tool.black]
-line-length = 120
-skip-string-normalization = true
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
 
 [tool.ruff]
 line-length = 120
-ignore = [
-    "D100", # `missing-module-docstring`
-    "D101", # `missing-function-docstring`
-    "D102", # `missing-method-docstring`
-    "D103", # `missing-class-docstring`
-    "D211", # `no-blank-line-before-class`
-    "D212", # `multi-line-summary-first-line`
-    "D203", # `blank-line-before-docstring`
-    "F541", # f-strings with no placeholders
-    "S101", # Use of assert detected
-]
-# Allow autofix for all enabled rules (when `--fix`) is provided.
-fixable = ["ALL"]
-# Select or ignore from https://beta.ruff.rs/docs/rules/
-select = [
-    "B", # bugbear
-    "D", # pydocstyle
-    "E", # pycodestyle errors
-    "F", # Pyflakes
-    "I", # isort
-    "S", # flake8-bandit
-    "W", # Warning
-]
-unfixable = []
 target-version = "py310"
 
-[tool.codespell]
-skip = "*.po,*.ts,.git,pyproject.toml"
-count = ""
-quiet-level = 3
-# ignore-words-list = ""
-
-[build-system]
-requires = ["poetry-core>=1.0.0", "poetry-dynamic-versioning"]
-build-backend = "poetry_dynamic_versioning.backend"
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
