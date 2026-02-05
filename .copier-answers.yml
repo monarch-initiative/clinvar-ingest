@@ -1,4 +1,4 @@
-_commit: fe21eee73f47a659640e02590a3d72ca82f2ca35
+_commit: adada77
 _src_path: gh:monarch-initiative/koza-ingest-template
 copyright_year: '2026'
 email: info@monarchinitiative.org
@@ -6,6 +6,7 @@ full_name: Monarch Initiative
 github_handle: monarch-initiative
 github_org: monarch-initiative
 license: MIT
-project_description: Modular ingest for ClinVar variants. Creates variant nodes and associations for phenotype, disease, gene, and pathogenicity relationships.
+project_description: Modular ingest for ClinVar variants. Creates variant nodes and
+    associations for phenotype, disease, gene, and pathogenicity relationships.
 project_name: clinvar-ingest
 project_slug: clinvar_ingest
