@@ -1,24 +1,108 @@
 """
-An example test file for the transform script.
+Unit tests for the ClinVar transform.
 
-It uses pytest fixtures to define the input data and the mock koza transform.
-The test_example function then tests the output of the transform script.
+Uses hardcoded auxiliary data extracted from real data files to enable
+true unit testing without external file dependencies.
 
 See the Koza documentation for more information on testing transforms:
 https://koza.monarchinitiative.org/Usage/testing/
 """
 
 import pytest
-from koza.utils.testing_utils import mock_koza
 from biolink_model.datamodel.pydanticmodel_v2 import (
     SequenceVariant,
     VariantToGeneAssociation,
     VariantToPhenotypicFeatureAssociation,
 )
+from koza.runner import KozaTransform, PassthroughWriter
 
-# Define the ingest name and transform script path
+from transform import transform_clinvar_record
+
+# Define the ingest name
 INGEST_NAME = "clinvar_variant"
-TRANSFORM_SCRIPT = "./src/clinvar_ingest/transform.py"
+
+
+###############################################################################
+### Hardcoded auxiliary data extracted from real data files                 ###
+### This enables true unit tests without external file dependencies         ###
+
+# MedGen to MONDO mappings (from MedGenIDMappings.txt.gz and mondo.sssom.tsv)
+BASE_MAP_TO_MONDO = {
+    # Direct MedGen mappings
+    "MedGen:CN300503": {"MONDO:0100283": ""},
+    "MedGen:C2981140": {"MONDO:0020367": ""},
+    "MedGen:C2973725": {"MONDO:0015924": ""},
+    "MedGen:C4552070": {"MONDO:0024533": ""},
+    "MedGen:C0854723": {"MONDO:0019118": ""},
+    "MedGen:C0272375": {"MONDO:0013144": ""},
+    # MONDO self-mappings (added by make_mondo_map)
+    "MONDO:0100283": {"MONDO:0100283": ""},
+    "MONDO:MONDO:0100283": {"MONDO:0100283": ""},
+    "MONDO:0020367": {"MONDO:0020367": ""},
+    "MONDO:MONDO:0020367": {"MONDO:0020367": ""},
+    "MONDO:0015924": {"MONDO:0015924": ""},
+    "MONDO:MONDO:0015924": {"MONDO:0015924": ""},
+    "MONDO:0024533": {"MONDO:0024533": ""},
+    "MONDO:MONDO:0024533": {"MONDO:0024533": ""},
+    "MONDO:0019118": {"MONDO:0019118": ""},
+    "MONDO:MONDO:0019118": {"MONDO:0019118": ""},
+    "MONDO:0013144": {"MONDO:0013144": ""},
+    "MONDO:MONDO:0013144": {"MONDO:0013144": ""},
+}
+
+
+def make_record(variation_id, review_status, clinical_significance, reported_phenotype_info, submitted_phenotype_info):
+    """Helper to create a submission record with required fields."""
+    return {
+        "VariationID": variation_id,
+        "ReviewStatus": review_status,
+        "ClinicalSignificance": clinical_significance,
+        "ReportedPhenotypeInfo": reported_phenotype_info,
+        "SubmittedPhenotypeInfo": submitted_phenotype_info,
+        # Other fields that may be accessed
+        "DateLastEvaluated": "",
+        "Description": "",
+        "CollectionMethod": "",
+        "OriginCounts": "",
+        "Submitter": "",
+        "SCV": "",
+    }
+
+
+###############################################################################
+### Helper function to run transform                                        ###
+
+def run_transform(rows: list[dict], var_records: dict, map_to_mondo: dict = None) -> list:
+    """Run the transform on input rows and return output entities.
+
+    Args:
+        rows: List of row dicts (from VCF data)
+        var_records: Dict mapping variant ID to list of submission records
+        map_to_mondo: Optional disease ID to MONDO ID mapping. Defaults to BASE_MAP_TO_MONDO.
+
+    Returns:
+        List of Biolink model entities produced by the transform.
+    """
+    if map_to_mondo is None:
+        map_to_mondo = BASE_MAP_TO_MONDO.copy()
+
+    koza_transform = KozaTransform(
+        mappings={},
+        writer=PassthroughWriter(),
+        extra_fields={},
+    )
+
+    # Inject test data directly (skip load_auxiliary_data)
+    koza_transform.state['var_records'] = var_records
+    koza_transform.state['map_to_mondo'] = map_to_mondo
+
+    entities = []
+    for row in rows:
+        result = transform_clinvar_record(koza_transform, row)
+        if result:
+            entities.extend(result)
+
+    return entities
 
 
 #################################################################
@@ -377,50 +461,236 @@ def test_case7_row():
     return row
 
 
+###############################################################################
+### Hardcoded submission records for each test case                         ###
+### Extracted from submission_summary.txt.gz                                ###
+
+@pytest.fixture
+def test_case1_var_records():
+    """Variant 1296989: Single record, reviewed by expert panel, Pathogenic."""
+    return {
+        "1296989": [
+            make_record(
+                "1296989",
+                "reviewed by expert panel",
+                "Pathogenic",
+                "CN300503:Overgrowth syndrome and/or cerebral malformations due to abnormalities in MTOR pathway genes",
+                "MONDO:MONDO:0100283"
+            ),
+        ]
+    }
+
+
+@pytest.fixture
+def test_case2_var_records():
+    """Variant 2505295: Single record, reviewed by expert panel, Likely pathogenic."""
+    return {
+        "2505295": [
+            make_record(
+                "2505295",
+                "reviewed by expert panel",
+                "Likely pathogenic",
+                "C2981140:Glaucoma of childhood",
+                "MONDO:MONDO:0020367"
+            ),
+        ]
+    }
+
+
+@pytest.fixture
+def test_case3_var_records():
+    """Variant 8797: Multiple records, one reviewed by expert panel."""
+    return {
+        "8797": [
+            make_record(
+                "8797",
+                "no assertion criteria provided",
+                "Pathogenic",
+                "C4552070:Pulmonary hypertension, primary, 1",
+                "PULMONARY HYPERTENSION, PRIMARY, 1"
+            ),
+            make_record(
+                "8797",
+                "no assertion criteria provided",
+                "Pathogenic",
+                "C2973725:Pulmonary arterial hypertension",
+                "Human Phenotype Ontology:HP:0002092"
+            ),
+            make_record(
+                "8797",
+                "reviewed by expert panel",
+                "Pathogenic",
+                "C2973725:Pulmonary arterial hypertension",
+                "MONDO:MONDO:0015924"
+            ),
+            make_record(
+                "8797",
+                "criteria provided, single submitter",
+                "Pathogenic",
+                "C3661900:not provided",
+                "Not Provided"
+            ),
+        ]
+    }
+
+
+@pytest.fixture
+def test_case4_var_records():
+    """Variant 156702: Multiple records, one reviewed by expert panel."""
+    return {
+        "156702": [
+            make_record(
+                "156702",
+                "reviewed by expert panel",
+                "Pathogenic",
+                "CN300503:Overgrowth syndrome and/or cerebral malformations due to abnormalities in MTOR pathway genes",
+                "MONDO:MONDO:0100283"
+            ),
+            make_record(
+                "156702",
+                "criteria provided, single submitter",
+                "Pathogenic",
+                "C1846385:Isolated focal cortical dysplasia type II",
+                "OMIM:607341"
+            ),
+            make_record(
+                "156702",
+                "criteria provided, single submitter",
+                "Pathogenic",
+                "C4225259:Macrocephaly-intellectual disability-neurodevelopmental disorder-small thorax syndrome",
+                "MONDO:MONDO:0014716"
+            ),
+            make_record(
+                "156702",
+                "no classification provided",
+                "not provided",
+                "C3661900:not provided",
+                "not provided"
+            ),
+        ]
+    }
+
+
+@pytest.fixture
+def test_case5_var_records():
+    """Variant 8797: Same as test_case3 (Multiple records, one reviewed by expert panel)."""
+    return {
+        "8797": [
+            make_record(
+                "8797",
+                "no assertion criteria provided",
+                "Pathogenic",
+                "C4552070:Pulmonary hypertension, primary, 1",
+                "PULMONARY HYPERTENSION, PRIMARY, 1"
+            ),
+            make_record(
+                "8797",
+                "no assertion criteria provided",
+                "Pathogenic",
+                "C2973725:Pulmonary arterial hypertension",
+                "Human Phenotype Ontology:HP:0002092"
+            ),
+            make_record(
+                "8797",
+                "reviewed by expert panel",
+                "Pathogenic",
+                "C2973725:Pulmonary arterial hypertension",
+                "MONDO:MONDO:0015924"
+            ),
+            make_record(
+                "8797",
+                "criteria provided, single submitter",
+                "Pathogenic",
+                "C3661900:not provided",
+                "Not Provided"
+            ),
+        ]
+    }
+
+
+@pytest.fixture
+def test_case6_var_records():
+    """Variant 179773: Multiple records, one reviewed by expert panel."""
+    return {
+        "179773": [
+            make_record(
+                "179773",
+                "criteria provided, single submitter",
+                "Likely pathogenic",
+                "CN239332:USH2A-related disorder",
+                "MedGen:CN239332"
+            ),
+            make_record(
+                "179773",
+                "no assertion criteria provided",
+                "Likely pathogenic",
+                "C0035334:Retinitis pigmentosa",
+                "MeSH:D012174"
+            ),
+            make_record(
+                "179773",
+                "reviewed by expert panel",
+                "Pathogenic",
+                "C0854723:Retinal dystrophy",
+                "MONDO:MONDO:0019118"
+            ),
+        ]
+    }
+
+
+@pytest.fixture
+def test_case7_var_records():
+    """Variant 654211: Multiple records, one reviewed by expert panel."""
+    return {
+        "654211": [
+            make_record(
+                "654211",
+                "reviewed by expert panel",
+                "Likely pathogenic",
+                "C0272375:Hereditary antithrombin deficiency",
+                "MONDO:MONDO:0013144"
+            ),
+            make_record(
+                "654211",
+                "criteria provided, single submitter",
+                "Uncertain significance",
+                "C0272375:Hereditary antithrombin deficiency",
+                "OMIM:613118"
+            ),
+        ]
+    }
+
+
 ####################################################################
 ### Generates koza like output from the input test_case_row data ###
- 
-@pytest.fixture
-def test_case1_entities(test_case1_row, mock_koza):
-    return mock_koza(INGEST_NAME,
-                     test_case1_row,
-                     TRANSFORM_SCRIPT)
 
 @pytest.fixture
-def test_case2_entities(test_case2_row, mock_koza):
-    return mock_koza(INGEST_NAME,
-                     test_case2_row,
-                     TRANSFORM_SCRIPT)
+def test_case1_entities(test_case1_row, test_case1_var_records):
+    return run_transform([test_case1_row], test_case1_var_records)
 
 @pytest.fixture
-def test_case3_entities(test_case3_row, mock_koza):
-    return mock_koza(INGEST_NAME,
-                     test_case3_row,
-                     TRANSFORM_SCRIPT)
+def test_case2_entities(test_case2_row, test_case2_var_records):
+    return run_transform([test_case2_row], test_case2_var_records)
 
 @pytest.fixture
-def test_case4_entities(test_case4_row, mock_koza):
-    return mock_koza(INGEST_NAME,
-                     test_case4_row,
-                     TRANSFORM_SCRIPT)
+def test_case3_entities(test_case3_row, test_case3_var_records):
+    return run_transform([test_case3_row], test_case3_var_records)
 
 @pytest.fixture
-def test_case5_entities(test_case5_row, mock_koza):
-    return mock_koza(INGEST_NAME,
-                     test_case5_row,
-                     TRANSFORM_SCRIPT)
+def test_case4_entities(test_case4_row, test_case4_var_records):
+    return run_transform([test_case4_row], test_case4_var_records)
 
 @pytest.fixture
-def test_case6_entities(test_case6_row, mock_koza):
-    return mock_koza(INGEST_NAME,
-                     test_case6_row,
-                     TRANSFORM_SCRIPT)
+def test_case5_entities(test_case5_row, test_case5_var_records):
+    return run_transform([test_case5_row], test_case5_var_records)
 
 @pytest.fixture
-def test_case7_entities(test_case7_row, mock_koza):
-    return mock_koza(INGEST_NAME,
-                     test_case7_row,
-                     TRANSFORM_SCRIPT)
+def test_case6_entities(test_case6_row, test_case6_var_records):
+    return run_transform([test_case6_row], test_case6_var_records)
+
+@pytest.fixture
+def test_case7_entities(test_case7_row, test_case7_var_records):
+    return run_transform([test_case7_row], test_case7_var_records)
 
 
 ########################
@@ -447,16 +717,16 @@ def test_case5(test_case5_entities):
     assert len([association for association in test_case5_entities if isinstance(association, VariantToPhenotypicFeatureAssociation)]) == 2
 
 def test_case6(test_case6_entities):
-    assert len(test_case6_entities) == 9 # SequenceVariant, VariantToGene1, VariantToGene2, VariantToDisease, VariantToPhenotype_x_5 
+    assert len(test_case6_entities) == 9 # SequenceVariant, VariantToGene1, VariantToGene2, VariantToDisease, VariantToPhenotype_x_5
     assert test_case6_entities[3].object == "MONDO:0019118" # Multiple mondoids are available and this is the one that should be chosen
     assert len([association for association in test_case6_entities if isinstance(association, VariantToGeneAssociation)]) == 2
     assert len([association for association in test_case6_entities if isinstance(association, VariantToPhenotypicFeatureAssociation)]) == 5
 
 def test_case7(test_case7_entities):
-    assert len(test_case7_entities) == 4 # SequenceVariant, VariantToGene, VariantToDisease, VariantToPhenotype 
+    assert len(test_case7_entities) == 4 # SequenceVariant, VariantToGene, VariantToDisease, VariantToPhenotype
     assert test_case7_entities[2].object == "MONDO:0013144" # Multiple records are available and we want to make sure we choose the proper on
     assert test_case7_entities[0].type == ["SO:0001583", "SO:0001627"]
 
 
-# TO DO: Tests for proper predicates? Test rows for variants that are not of review status 3 stars or above? 
+# TO DO: Tests for proper predicates? Test rows for variants that are not of review status 3 stars or above?
 # (Tricky because paramters / decisions about what information actually gets pulled and when can alter the results obtained for variants with a review status of less than 3 stars
