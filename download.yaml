@@ -14,7 +14,3 @@
 
 - url: https://ftp.ncbi.nlm.nih.gov/pub/medgen/MedGenIDMappings.txt.gz
   local_name: data/MedGenIDMappings.txt.gz
-
-## hgnc geneId conversion file (this is only used for development purposes)
-##- url: https://g-a8b222.dd271.03c0.data.globus.org/pub/databases/genenames/hgnc/tsv/hgnc_complete_set.txt
-##  local_name: data/hgnc_complete_set.txt

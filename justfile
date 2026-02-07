@@ -10,14 +10,10 @@ TRANSFORMS := "transform"
 _default:
     @just --list
 
-# ============== Project Management ==============
-
 # Install dependencies
 [group('project management')]
 install:
     uv sync --group dev
-
-# ============== Ingest Pipeline ==============
 
 # Full pipeline: download -> preprocess -> transform -> postprocess
 [group('ingest')]
@@ -46,7 +42,6 @@ transform-all: download
         fi
     done
 
-
 # Run specific transform
 [group('ingest')]
 transform NAME:
@@ -56,8 +51,6 @@ transform NAME:
 [group('ingest')]
 postprocess:
     @echo "No postprocessing required"
-
-# ============== Development ==============
 
 # Run tests
 [group('development')]
@@ -80,6 +73,6 @@ format:
     uv run ruff format .
 
 # Clean output directory
-[group('development')]
+[group('ingest')]
 clean:
     rm -rf output/
