@@ -15,8 +15,9 @@ requires-python = ">=3.10,<4.0"
 dynamic = ["version"]
 
 dependencies = [
-  "koza>=0.6.0",
+  "koza>=2.0.0",
   "biolink-model>=4.0.0",
+  "cyvcf2",
 ]
 
 [dependency-groups]
@@ -44,3 +45,6 @@ target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "W"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E501"]
