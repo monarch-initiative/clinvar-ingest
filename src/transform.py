@@ -12,6 +12,14 @@ sub_path = "./data/submission_summary.txt.gz"
 sssom_path = "./data/mondo.sssom.tsv"
 medgen_path = "./data/MedGenIDMappings.txt.gz"
 
+@koza.on_data_begin()
+def load_auxiliary_data(koza_transform):
+    """Load auxiliary data files into koza_transform.state for use during transform."""
+    # File paths to acessory data
+    sub_path = "./data/submission_summary.txt.gz"
+    sssom_path = "./data/mondo.sssom.tsv"
+    medgen_path = "./data/MedGenIDMappings.txt.gz"
+
 # Map records to each clinvar variant id
 var_records = make_variant_record_map(sub_path)
 

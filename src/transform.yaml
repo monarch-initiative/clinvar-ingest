@@ -1,10 +1,13 @@
 name: "clinvar_variant"
 
+metadata: "./src/clinvar_ingest/metadata.yaml"
+
 reader:
   files:
     - "../data/clinvar.tsv"
   format: "csv"
   delimiter: "\t"
+  header_mode: 0
   columns:
     - CHROM
     - POS
@@ -71,5 +74,5 @@ writer:
     - agent_type
     - primary_knowledge_source
     - aggregator_knowledge_source
-
-
+  min_node_count: 10
+  min_edge_count: 5

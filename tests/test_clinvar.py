@@ -10,6 +10,7 @@ from biolink_model.datamodel.pydanticmodel_v2 import (
     VariantToGeneAssociation,
     VariantToPhenotypicFeatureAssociation,
 )
+from koza.runner import KozaTransform, PassthroughWriter
 
 from clinvar_helpers import process_row
 
