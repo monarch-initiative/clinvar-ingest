@@ -21,8 +21,8 @@ jobs:
         with:
           version: "latest"
 
-      - name: Set up Python {% raw %}${{ matrix.python-version }}{% endraw %}
-        run: uv python install {% raw %}${{ matrix.python-version }}{% endraw %}
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
 
       - name: Install just
         uses: extractions/setup-just@v2
