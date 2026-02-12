@@ -1,6 +1,3 @@
-# Koza 2.x config for transforming ClinVar VCF data to Biolink model format
-# See https://koza.monarchinitiative.org/ for documentation
-
 name: "clinvar_variant"
 
 metadata: "./src/clinvar_ingest/metadata.yaml"
@@ -56,7 +53,8 @@ reader:
     - SCI
     - SCIINCL
 
-transform: {}
+transform:
+  mode: "flat"
 
 writer:
   node_properties:

@@ -16,10 +16,8 @@ dynamic = ["version"]
 
 dependencies = [
   "koza>=2.0.0",
-  "kghub-downloader>=0.4.0",
   "biolink-model>=4.0.0",
-  "duckdb>=0.10.2",
-  "cyvcf2>=0.31.0",
+  "cyvcf2",
 ]
 
 [dependency-groups]
@@ -28,9 +26,6 @@ dev = [
     "pytest-cov>=4.1.0",
     "ruff>=0.4.8",
 ]
-
-[tool.hatch.build.targets.wheel]
-packages = ["src"]
 
 [tool.hatch.version]
 source = "uv-dynamic-versioning"
@@ -50,3 +45,6 @@ target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "W"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E501"]
