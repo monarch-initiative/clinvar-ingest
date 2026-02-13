@@ -1,17 +1,25 @@
-name: Release
+name: Create Release
 
 on:
-  release:
-    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (leave empty for auto-generated date tag)'
+        required: false
+        type: string
+  schedule:
+    # Run monthly on the 1st at midnight UTC
+    - cron: '0 0 1 * *'
 
 jobs:
-  release:
+  create-release:
     runs-on: ubuntu-latest
     permissions:
       contents: write
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4
@@ -27,9 +35,24 @@ jobs:
       - name: Run pipeline
         run: just run
 
-      - name: Upload output artifacts
-        uses: actions/upload-artifact@v4
+      - name: Generate release tag
+        id: tag
+        run: |
+          if [ -n "${{ inputs.tag }}" ]; then
+            echo "tag=${{ inputs.tag }}" >> $GITHUB_OUTPUT
+          else
+            echo "tag=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
         with:
-          name: ingest-output
-          path: output/
-          if-no-files-found: warn
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: Release ${{ steps.tag.outputs.tag }}
+          body: |
+            Automated release of ClinVar ingest data.
+
+            ## Transforms included
+            - clinvar_variant (SequenceVariant nodes, disease/phenotype/gene associations)
+          files: |
+            output/*

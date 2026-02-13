@@ -1,7 +1,5 @@
 name: "clinvar_variant"
 
-metadata: "./src/clinvar_ingest/metadata.yaml"
-
 reader:
   files:
     - "../data/clinvar.tsv"

@@ -15,9 +15,9 @@ _default:
 install:
     uv sync --group dev
 
-# Full pipeline: download -> preprocess -> transform -> postprocess
+# Full pipeline: test -> download -> preprocess -> transform -> postprocess
 [group('ingest')]
-run: download preprocess transform-all postprocess
+run: test download preprocess transform-all postprocess
     @echo "Done!"
 
 # Download source data
