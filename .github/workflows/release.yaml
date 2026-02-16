@@ -28,7 +28,7 @@ jobs:
         run: just run
 
       - name: Upload output artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ingest-output
           path: output/
