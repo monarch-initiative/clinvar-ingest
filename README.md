@@ -1,6 +1,6 @@
-# clinvar-ingest
+# ClinVar
 
-Modular ingest for ClinVar variants. Creates variant nodes and associations for phenotype, disease, gene, and pathogenicity relationships.
+ClinVar aggregates information about genomic variation and its relationship to human health. 
 
 ## Ingest files and how nodes and edges are generated
 
@@ -31,44 +31,3 @@ These edges are created only if a Variant to Disease edge can be made. Gene symb
 
 The predicate "is_sequence_variant_of" is used. Sequence Ontology terms are also reported within the INFO column pertaining to the variant's "molecular consequence" (MC subfield within INFO). These terms are recorded in the "type" slot for the SequenceVariant node that is created.
 
-## Requirements
-
-- Python >= 3.10
-- [uv](https://docs.astral.sh/uv/)
-- [just](https://github.com/casey/just)
-
-## Installation
-
-```bash
-just install
-```
-
-## Usage
-
-To see available commands:
-
-```bash
-just --list
-```
-
-### Download and Transform
-
-Run the full pipeline (test, download, preprocess, transform, postprocess):
-
-```bash
-just run
-```
-
-Or run individual steps:
-
-```bash
-just download
-just preprocess
-just transform-all
-```
-
-### Testing
-
-```bash
-just test
-```
