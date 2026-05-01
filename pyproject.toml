@@ -24,9 +24,7 @@ dependencies = [
 ]
 
 [tool.uv.sources]
-# Path-dep on the kozahub metadata schema. Assumes the schema repo is checked
-# out as a sibling directory. Switch to `git = ...` or PyPI once published.
-kozahub-metadata-schema = { path = "../kozahub-metadata-schema", editable = true }
+kozahub-metadata-schema = { git = "https://github.com/monarch-initiative/kozahub-metadata-schema", rev = "main" }
 
 [dependency-groups]
 dev = [
