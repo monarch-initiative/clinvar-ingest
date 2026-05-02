@@ -35,6 +35,10 @@ preprocess:
 transform-all: download
     #!/usr/bin/env bash
     set -euo pipefail
+    # PYTHONPATH=src so koza's spec-loaded transform module can import
+    # sibling files (clinvar_helpers, etc.) — same effect as pytest's
+    # [tool.pytest.ini_options] pythonpath = ["src"].
+    export PYTHONPATH=src
     for t in {{TRANSFORMS}}; do
         if [ -n "$t" ]; then
             echo "Transforming $t..."
@@ -50,7 +54,7 @@ metadata:
 # Run specific transform
 [group('ingest')]
 transform NAME:
-    uv run koza transform {{PKG}}/{{NAME}}.yaml
+    PYTHONPATH=src uv run koza transform {{PKG}}/{{NAME}}.yaml
 
 # Postprocess (no-op for clinvar)
 [group('ingest')]
