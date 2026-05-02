@@ -116,7 +116,7 @@ Even if no conflict markers are found, still verify the justfile and workflows (
 
 3. **Verify TRANSFORMS** is not empty (unless it was empty before). If copier overwrote it with `""`, restore from Phase 1 capture.
 
-4. **Verify download recipe** matches Phase 1 capture. If copier replaced it with `uv run python scripts/download.py`, restore the local version.
+4. **Verify download recipe** matches Phase 1 capture. If copier replaced it with `uv run downloader download.yaml`, restore the local version.
 
 5. **Verify run recipe** dependencies match Phase 1 capture.
 
