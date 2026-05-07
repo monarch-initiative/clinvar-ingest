@@ -1224,8 +1224,8 @@ wheels = [
 
 [[package]]
 name = "kozahub-metadata-schema"
-version = "0.0.0.post1.dev0+265814e"
-source = { git = "https://github.com/monarch-initiative/kozahub-metadata-schema?rev=main#265814e60b043a94a5617c503e4c6b8cd584d9bb" }
+version = "0.0.0.post6.dev0+ebbacfa"
+source = { git = "https://github.com/monarch-initiative/kozahub-metadata-schema?rev=main#ebbacfa4469a420ce9584cafc57deb8c23e10892" }
 dependencies = [
     { name = "linkml-runtime" },
     { name = "pyyaml" },
