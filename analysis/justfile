@@ -1,0 +1,13 @@
+# clinvar-ingest analysis justfile — exploratory, one-off scripts.
+# Not part of the production ingest pipeline (see the top-level justfile for that).
+# Run from the repo root: just --justfile analysis/justfile <recipe>
+# Or from analysis/:       cd analysis && just <recipe>
+
+# List all commands
+_default:
+    @just --list
+
+# Generate the combined ClinVar exploration report (star-cutoff impact,
+# multi-submitter concordance rescue, and CLNSIG/CLNREVSTAT/CLNVC crossfilter)
+report:
+    PYTHONPATH=../src uv run --project .. python clinvar_report.py
