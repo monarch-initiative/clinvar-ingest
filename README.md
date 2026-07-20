@@ -11,13 +11,13 @@ Two files downloaded from ClinVar are leveraged in this ingest:
 
 ### Variant nodes (SequenceVariant)
 
-SequenceVariant nodes are created from ClinVar variants that are deemed Pathogenic or Likely Pathogenic. Additionally, only variants that have a ClinVar review status of 3 or more stars (4 maximum) will be included. This subset corresponds to the most credible set of variants that are pathogenic within the ClinVar dataset.
+SequenceVariant nodes are created from ClinVar variants that are deemed Pathogenic or Likely Pathogenic. A submission record is accepted as evidence if it either (a) has a ClinVar review status of 3 or more stars (4 maximum), or (b) is corroborated by at least 2 independent submitters agreeing on the same disease and the same classification, regardless of each individual submitter's own review status. This two-path rule recovers gene-disease associations that ClinVar's per-submission review-status field can never mark above 1 star on its own — its "2 stars, multiple submitters, no conflicts" tier is an aggregate ClinVar computes *across* a variant's submitters and only appears in ClinVar's variant-level files (e.g. the VCF's CLNREVSTAT), never on an individual submission record — while still requiring independent corroboration rather than accepting any single low-confidence submission.
 
 ### Variant to Disease edges (VariantToDiseaseAssociation)
 
 Disease IDs are derived from the ReportedPhenotypeInfo column within the submission_summary.txt file. This column consists of MedGen IDs that we then map to a Mondo ID. Alternatively, if a Mondo ID cannot be found, then the SubmittedPhenotypeInfo column will be used instead. If neither column maps to a Mondo ID then no edge will be made.
 
-Predicates are derived from the ClinicalSignificance column within the submission_summary.txt file. Currently only Pathogenic and Likely pathogenic are included as "causes" and "associated_with_increased_likelihood_of" respectively.
+Predicates are derived from the ClinicalSignificance column within the submission_summary.txt file. Currently only Pathogenic and Likely pathogenic are included as "causes" and "associated_with_increased_likelihood_of" respectively. A gene-disease pair is included if it meets the review-status or multi-submitter concordance rule described above.
 
 ### Variant to Phenotype edges (VariantToPhenotypicFeatureAssociation)
 

@@ -38,6 +38,7 @@ review_star_map = {
 }
 
 var2disease_star_min = 3
+min_concordant_submitters = 2
 
 predicate_map = {
     "Pathogenic": CAUSES,
@@ -150,7 +151,45 @@ def format_id_to_map(info):
     return idname
 
 
-def variant_records_to_disease(record_list, map_to_mondo, star_min=3):
+def concordant_disease_pairs(record_list, map_to_mondo, min_submitters):
+    """(mondo_id, ClinicalSignificance) pairs supported by >=min_submitters
+    distinct Submitters across record_list, regardless of each submitter's
+    own review status. Used by variant_records_to_disease() to rescue
+    gene-disease pairs whose individual submission records are all below
+    star_min but where multiple independent submitters agree on the same
+    disease and the same classification.
+    """
+    groups = {}
+    for rec in record_list:
+        clinsig = rec["ClinicalSignificance"]
+        if clinsig not in predicate_map:
+            continue
+
+        mondo_ids = set()
+        for mg_mapping in rec["ReportedPhenotypeInfo"].split(";"):
+            mg_map = "MedGen:{}".format(mg_mapping.split(":")[0])
+            if mg_map in map_to_mondo:
+                mondo_ids.update(map_to_mondo[mg_map].keys())
+
+        if not mondo_ids:
+            for dis_id in rec["SubmittedPhenotypeInfo"].split(";"):
+                dis_id = format_id_to_map(dis_id)
+                if dis_id in map_to_mondo:
+                    mondo_ids.update(map_to_mondo[dis_id].keys())
+                elif dis_id is not None and "MONDO:" in dis_id:
+                    mondo_ids.add(dis_id)
+
+        for mondo_id in mondo_ids:
+            groups.setdefault((mondo_id, clinsig), set()).add(rec["Submitter"])
+
+    return {key for key, submitters in groups.items() if len(submitters) >= min_submitters}
+
+
+def variant_records_to_disease(record_list, map_to_mondo, star_min=3, rescue_min_submitters=None):
+    concordant_pairs = (
+        concordant_disease_pairs(record_list, map_to_mondo, rescue_min_submitters) if rescue_min_submitters else set()
+    )
+
     dis = {}
     preds = {}
     org_preds = {}
@@ -158,8 +197,6 @@ def variant_records_to_disease(record_list, map_to_mondo, star_min=3):
         stars = int(review_star_map[rec["ReviewStatus"].replace(" ", "_")])
         clinsig = rec["ClinicalSignificance"]
 
-        if stars < star_min:
-            continue
         if clinsig not in predicate_map:
             continue
 
@@ -178,13 +215,15 @@ def variant_records_to_disease(record_list, map_to_mondo, star_min=3):
                 continue
 
             for d in mondo_ids:
+                mapped_terms += 1
+                if stars < star_min and (d, clinsig) not in concordant_pairs:
+                    continue
                 dis[d] = ""
                 if d not in preds:
                     preds[d] = {}
                     org_preds[d] = {}
                 preds[d][mapped_predicate] = ""
                 org_preds[d][org_predicate] = ""
-                mapped_terms += 1
 
         if mapped_terms == 0:
             for dis_id in rec["SubmittedPhenotypeInfo"].split(";"):
@@ -200,13 +239,15 @@ def variant_records_to_disease(record_list, map_to_mondo, star_min=3):
                     continue
 
                 for d in mondo_ids:
+                    mapped_terms += 1
+                    if stars < star_min and (d, clinsig) not in concordant_pairs:
+                        continue
                     dis[d] = ""
                     if d not in preds:
                         preds[d] = {}
                         org_preds[d] = {}
                     preds[d][mapped_predicate] = ""
                     org_preds[d][org_predicate] = ""
-                    mapped_terms += 1
 
     return dis, preds, org_preds
 
@@ -281,7 +322,10 @@ def process_row(row, var_records, map_to_mondo):
     gene_ids, gene_symbols = make_genes_from_row(ginfo)
 
     disease_ids, disease_predicates, org_predicates = variant_records_to_disease(
-        var_records[varid], map_to_mondo, star_min=var2disease_star_min
+        var_records[varid],
+        map_to_mondo,
+        star_min=var2disease_star_min,
+        rescue_min_submitters=min_concordant_submitters,
     )
 
     diss_info = parse_CLNDISDB(raw_diss_info)

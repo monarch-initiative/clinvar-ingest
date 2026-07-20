@@ -7,6 +7,7 @@ rather than using the removed koza 1.x mock_koza pattern.
 
 import pytest
 from biolink_model.datamodel.pydanticmodel_v2 import (
+    VariantToDiseaseAssociation,
     VariantToGeneAssociation,
     VariantToPhenotypicFeatureAssociation,
 )
@@ -15,8 +16,14 @@ from koza.runner import KozaTransform, PassthroughWriter
 from clinvar_helpers import process_row
 
 
-def _make_record(clinsig="Pathogenic", medgen_cui="CN000000", disease_name="test_disease"):
-    """Create a minimal submission record that passes the 3-star review filter."""
+def _make_record(
+    clinsig="Pathogenic",
+    medgen_cui="CN000000",
+    disease_name="test_disease",
+    review_status="reviewed by expert panel",
+    submitter="TestLab",
+):
+    """Create a minimal submission record. Defaults pass the 3-star review filter."""
     return {
         "VariationID": "0",
         "ClinicalSignificance": clinsig,
@@ -24,10 +31,10 @@ def _make_record(clinsig="Pathogenic", medgen_cui="CN000000", disease_name="test
         "Description": "",
         "SubmittedPhenotypeInfo": ".",
         "ReportedPhenotypeInfo": "{}:{}".format(medgen_cui, disease_name),
-        "ReviewStatus": "reviewed by expert panel",
+        "ReviewStatus": review_status,
         "CollectionMethod": "clinical testing",
         "OriginCounts": "",
-        "Submitter": "TestLab",
+        "Submitter": submitter,
         "SCV": "SCV000000001",
     }
 
@@ -55,6 +62,52 @@ VAR_RECORDS = {
     # Case 7: ID=654211 → records for MONDO:0013144
     "654211": [
         _make_record("Likely pathogenic", "C0272375", "Hereditary_antithrombin_deficiency"),
+    ],
+    # Case 8: ID=9000001 → two 1-star submitters agreeing on Pathogenic + same disease
+    # → rescued via concordance despite neither reaching star_min=3
+    "9000001": [
+        _make_record(
+            "Pathogenic",
+            "C2981140",
+            "Glaucoma_of_childhood",
+            review_status="criteria provided, single submitter",
+            submitter="LabA",
+        ),
+        _make_record(
+            "Pathogenic",
+            "C2981140",
+            "Glaucoma_of_childhood",
+            review_status="criteria provided, single submitter",
+            submitter="LabB",
+        ),
+    ],
+    # Case 9: ID=9000002 → a single 1-star submitter alone → NOT rescued
+    "9000002": [
+        _make_record(
+            "Pathogenic",
+            "C2981140",
+            "Glaucoma_of_childhood",
+            review_status="criteria provided, single submitter",
+            submitter="LabA",
+        ),
+    ],
+    # Case 10: ID=9000003 → two 1-star submitters, same disease, but DIFFERENT
+    # classifications → NOT rescued (concordance requires the exact same clinsig)
+    "9000003": [
+        _make_record(
+            "Pathogenic",
+            "C2981140",
+            "Glaucoma_of_childhood",
+            review_status="criteria provided, single submitter",
+            submitter="LabA",
+        ),
+        _make_record(
+            "Likely pathogenic",
+            "C2981140",
+            "Glaucoma_of_childhood",
+            review_status="criteria provided, single submitter",
+            submitter="LabB",
+        ),
     ],
 }
 
@@ -474,6 +527,159 @@ def test_case7_row():
     }
 
 
+# Rescue cases: reuse the MYOC/MONDO:0020367/HP:0001087 wiring from test_case2 to
+# isolate the multi-submitter-concordance behavior without new mondo/HPO fixture data.
+
+# Two 1-star submitters, same disease, same classification → rescued
+@pytest.fixture
+def test_case8_row():
+    return {
+        "CHROM": "1",
+        "POS": "171636092",
+        "ID": "9000001",
+        "REF": "T",
+        "ALT": "A",
+        "QUAL": ".",
+        "FILTER": ".",
+        "AF_ESP": ".",
+        "AF_EXAC": ".",
+        "AF_TGP": ".",
+        "ALLELEID": "2670263",
+        "CLNDN": "Glaucoma_of_childhood",
+        "CLNDNINCL": ".",
+        "CLNDISDB": "Human_Phenotype_Ontology:HP:0001087,MONDO:MONDO:0020367,MedGen:C2981140,Orphanet:98977",
+        "CLNDISDBINCL": ".",
+        "CLNHGVS": "NC_000001.11:g.171636092T>A",
+        "CLNREVSTAT": "criteria_provided,_multiple_submitters,_no_conflicts",
+        "CLNSIG": "Pathogenic",
+        "CLNSIGCONF": ".",
+        "CLNSIGINCL": ".",
+        "CLNVC": "single_nucleotide_variant",
+        "CLNVCSO": "SO:0001483",
+        "CLNVI": ".",
+        "DBVARID": ".",
+        "GENEINFO": "MYOC:4653",
+        "MC": "SO:0001583|missense_variant",
+        "ONCDN": ".",
+        "ONCDNINCL": ".",
+        "ONCDISDB": ".",
+        "ONCDISDBINCL": ".",
+        "ONC": ".",
+        "ONCINCL": ".",
+        "ONCREVSTAT": ".",
+        "ONCCONF": ".",
+        "ORIGIN": "1",
+        "RS": ".",
+        "SCIDN": ".",
+        "SCIDNINCL": ".",
+        "SCIDISDB": ".",
+        "SCIDISDBINCL": ".",
+        "SCIREVSTAT": ".",
+        "SCI": ".",
+        "SCIINCL": ".",
+    }
+
+
+# Single 1-star submitter alone → NOT rescued
+@pytest.fixture
+def test_case9_row():
+    return {
+        "CHROM": "1",
+        "POS": "171636092",
+        "ID": "9000002",
+        "REF": "T",
+        "ALT": "A",
+        "QUAL": ".",
+        "FILTER": ".",
+        "AF_ESP": ".",
+        "AF_EXAC": ".",
+        "AF_TGP": ".",
+        "ALLELEID": "2670264",
+        "CLNDN": "Glaucoma_of_childhood",
+        "CLNDNINCL": ".",
+        "CLNDISDB": "Human_Phenotype_Ontology:HP:0001087,MONDO:MONDO:0020367,MedGen:C2981140,Orphanet:98977",
+        "CLNDISDBINCL": ".",
+        "CLNHGVS": "NC_000001.11:g.171636092T>A",
+        "CLNREVSTAT": "criteria_provided,_single_submitter",
+        "CLNSIG": "Pathogenic",
+        "CLNSIGCONF": ".",
+        "CLNSIGINCL": ".",
+        "CLNVC": "single_nucleotide_variant",
+        "CLNVCSO": "SO:0001483",
+        "CLNVI": ".",
+        "DBVARID": ".",
+        "GENEINFO": "MYOC:4653",
+        "MC": "SO:0001583|missense_variant",
+        "ONCDN": ".",
+        "ONCDNINCL": ".",
+        "ONCDISDB": ".",
+        "ONCDISDBINCL": ".",
+        "ONC": ".",
+        "ONCINCL": ".",
+        "ONCREVSTAT": ".",
+        "ONCCONF": ".",
+        "ORIGIN": "1",
+        "RS": ".",
+        "SCIDN": ".",
+        "SCIDNINCL": ".",
+        "SCIDISDB": ".",
+        "SCIDISDBINCL": ".",
+        "SCIREVSTAT": ".",
+        "SCI": ".",
+        "SCIINCL": ".",
+    }
+
+
+# Two 1-star submitters, same disease, DIFFERENT classifications → NOT rescued
+@pytest.fixture
+def test_case10_row():
+    return {
+        "CHROM": "1",
+        "POS": "171636092",
+        "ID": "9000003",
+        "REF": "T",
+        "ALT": "A",
+        "QUAL": ".",
+        "FILTER": ".",
+        "AF_ESP": ".",
+        "AF_EXAC": ".",
+        "AF_TGP": ".",
+        "ALLELEID": "2670265",
+        "CLNDN": "Glaucoma_of_childhood",
+        "CLNDNINCL": ".",
+        "CLNDISDB": "Human_Phenotype_Ontology:HP:0001087,MONDO:MONDO:0020367,MedGen:C2981140,Orphanet:98977",
+        "CLNDISDBINCL": ".",
+        "CLNHGVS": "NC_000001.11:g.171636092T>A",
+        "CLNREVSTAT": "criteria_provided,_conflicting_classifications",
+        "CLNSIG": "Conflicting_classifications_of_pathogenicity",
+        "CLNSIGCONF": ".",
+        "CLNSIGINCL": ".",
+        "CLNVC": "single_nucleotide_variant",
+        "CLNVCSO": "SO:0001483",
+        "CLNVI": ".",
+        "DBVARID": ".",
+        "GENEINFO": "MYOC:4653",
+        "MC": "SO:0001583|missense_variant",
+        "ONCDN": ".",
+        "ONCDNINCL": ".",
+        "ONCDISDB": ".",
+        "ONCDISDBINCL": ".",
+        "ONC": ".",
+        "ONCINCL": ".",
+        "ONCREVSTAT": ".",
+        "ONCCONF": ".",
+        "ORIGIN": "1",
+        "RS": ".",
+        "SCIDN": ".",
+        "SCIDNINCL": ".",
+        "SCIDISDB": ".",
+        "SCIDISDBINCL": ".",
+        "SCIREVSTAT": ".",
+        "SCI": ".",
+        "SCIINCL": ".",
+    }
+
+
 ####################################################################
 ### Entity fixtures using process_row directly ###
 
@@ -511,6 +717,21 @@ def test_case6_entities(test_case6_row):
 @pytest.fixture
 def test_case7_entities(test_case7_row):
     return process_row(test_case7_row, VAR_RECORDS, MAP_TO_MONDO)
+
+
+@pytest.fixture
+def test_case8_entities(test_case8_row):
+    return process_row(test_case8_row, VAR_RECORDS, MAP_TO_MONDO)
+
+
+@pytest.fixture
+def test_case9_entities(test_case9_row):
+    return process_row(test_case9_row, VAR_RECORDS, MAP_TO_MONDO)
+
+
+@pytest.fixture
+def test_case10_entities(test_case10_row):
+    return process_row(test_case10_row, VAR_RECORDS, MAP_TO_MONDO)
 
 
 ########################
@@ -553,3 +774,23 @@ def test_case7(test_case7_entities):
     assert len(test_case7_entities) == 4  # SequenceVariant, VariantToGene, VariantToDisease, VariantToPhenotype
     assert test_case7_entities[2].object == "MONDO:0013144"
     assert test_case7_entities[0].type == ["SO:0001583", "SO:0001627"]
+
+
+def test_case8_rescued_by_concordant_submitters(test_case8_entities):
+    """Two 1-star submitters independently agreeing on the same disease and the
+    same classification should be rescued despite neither reaching star_min=3."""
+    assert len(test_case8_entities) == 4  # SequenceVariant, VariantToGene, VariantToDisease, VariantToPhenotype
+    diseases = [e for e in test_case8_entities if isinstance(e, VariantToDiseaseAssociation)]
+    assert len(diseases) == 1
+    assert diseases[0].object == "MONDO:0020367"
+
+
+def test_case9_not_rescued_single_low_star_submitter(test_case9_entities):
+    """A single 1-star submitter alone (no concordant corroboration) must NOT be rescued."""
+    assert test_case9_entities == []
+
+
+def test_case10_not_rescued_differing_classifications(test_case10_entities):
+    """Two 1-star submitters on the same disease but different classifications must
+    NOT be rescued -- concordance requires the exact same ClinicalSignificance."""
+    assert test_case10_entities == []
