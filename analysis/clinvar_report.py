@@ -8,7 +8,7 @@ Section numbers below match the rendered report's headings (1 Purpose,
    submission_summary.txt): `clinvar_helpers.variant_records_to_disease()`
    drops any submission record whose review status maps to fewer than
    `star_min` stars (production currently hardcodes `var2disease_star_min =
-   3`). Section 4 re-runs that same disease mapping at star_min in
+   3`). Section 5 re-runs that same disease mapping at star_min in
    {0, 1, 2, 3, 4} and reports, for each threshold, distinct variants and
    distinct (gene, disease) pairs. These counts intentionally ignore the
    separate HPO-overlap requirement in process_row() (which gates whether
@@ -22,10 +22,10 @@ Section numbers below match the rendered report's headings (1 Purpose,
    classification provided / flagged submission) -- "2 stars" (criteria
    provided, multiple submitters, no conflicts) is an aggregate,
    cross-submitter status that only appears in ClinVar's variant-level
-   files (see section 6, which uses CLNREVSTAT from the VCF directly and
+   files (see section 7, which uses CLNREVSTAT from the VCF directly and
    *does* see this tier), never per-submission-record here.
 
-4b. Multi-submitter concordance rescue (same section 4 block): gene-disease pairs whose ONLY
+4b. Multi-submitter concordance rescue (same section 5 block): gene-disease pairs whose ONLY
    supporting evidence is star 0/1 (never reach star_min=2) are additionally
    checked for >=2 distinct Submitters independently reporting the *same*
    MONDO disease with the *exact same* ClinicalSignificance (Pathogenic/
@@ -37,7 +37,7 @@ Section numbers below match the rendered report's headings (1 Purpose,
    informational only, not used as a filter.
 
 5. Monarch KG gene-disease associations vs ClinVar: reconciles the pairs
-   section 4 derives against the curated gene-disease edges in the Monarch
+   section 5 derives against the curated gene-disease edges in the Monarch
    KG (monarch-kg.tar.gz, ~330MB, auto-fetched and reduced to small derived
    extracts on first run). Monarch's edges come from OMIM / Orphanet /
    ClinGen and are assertions about the GENE; ClinVar's pairs are DERIVED by
@@ -58,7 +58,7 @@ Section numbers below match the rendered report's headings (1 Purpose,
    classified. An interactive crossfilter widget lets you toggle
    significance / star / variant-type / size / literature / concordance /
    STRchive / production-filter dimensions and see live variant counts. That
-   last dimension re-runs section 4's exact inclusion criterion
+   last dimension re-runs section 5's exact inclusion criterion
    (>=PRODUCTION_STAR_MIN stars on some individual submission record, OR
    >=MIN_CONCORDANT_SUBMITTERS concordant submitters) per variant, so the
    crossfilter can select the population production actually ingests --
@@ -71,7 +71,7 @@ Section numbers below match the rendered report's headings (1 Purpose,
    STRchive, fetched and cached on first run), independent of ClinVar's own
    CLNVC "Microsatellite" label.
 
-7. New ClinVar ingest recommendation: consolidates sections 4-6 into four
+7. New ClinVar ingest recommendation: consolidates sections 5-7 into four
    concrete, prioritised changes to src/clinvar_helpers.py -- decide
    inclusion per (gene, disease) pair rather than per variant; test
    concordance over the MONDO hierarchy instead of exact ids; attribute a
@@ -80,7 +80,7 @@ Section numbers below match the rendered report's headings (1 Purpose,
    projected pair counts for each threshold so the tradeoff is explicit.
 
 8. Structural variants / CNVs -- what's NOT in the VCF: clinvar.vcf.gz (the
-   only input sections 4-6 use) requires a fixed genomic position + REF/ALT,
+   only input sections 5-7 use) requires a fixed genomic position + REF/ALT,
    which structurally excludes copy-number gain/loss, translocations, and
    other large rearrangements. ClinVar publishes those separately, in
    variant_summary.txt.gz (same tab_delimited/ directory as
@@ -178,7 +178,7 @@ EXAMPLE_VARIANT_IDS = {
     "indel_ins": "973964",  # RPE65 NC_000001.11:g.68431505_68431506insCAGC, Pathogenic, 3-star
     "str": "183387",  # FMR1 CGG repeat expansion NC_000023.11:g.147912051CGG[201], Fragile X syndrome
 }
-# Structural variants -- not in clinvar.vcf.gz, only in variant_summary.txt.gz (see section 8)
+# Structural variants -- not in clinvar.vcf.gz, only in variant_summary.txt.gz (see section 9)
 EXAMPLE_SV_IDS = {
     "cnv_del_large": "2579266",  # 22q11.21(chr22:18985739-21081116)x1, ~2.1Mb, DiGeorge syndrome
     "cnv_dup_large": "4846746",  # 22q11.21(chr22:18932238-20324016)x3, ~1.4Mb, Congenital heart disease
@@ -1271,7 +1271,7 @@ def build_gene_model_variants(
     disease_filter: set | None = None,
 ) -> list[dict]:
     """Every Pathogenic/Likely-pathogenic SNV in gene_symbol with >=1 resolved
-    MONDO disease (star_min=0 -- any submission evidence, matching section 6's
+    MONDO disease (star_min=0 -- any submission evidence, matching section 7's
     own "any P/LP evidence" pair-building pass), each tagged with one primary
     disease (the lexicographically-first MONDO id among those mapped, or the
     first one that's also in disease_filter if given) purely so a single-gene,
@@ -1404,7 +1404,7 @@ def render_gene_model_svg(gene_symbol: str, gene_model: dict, variants: list[dic
 
 
 # ---------------------------------------------------------------------------
-# Section 4: review-star cutoff + multi-submitter concordance rescue
+# Section 5: review-star cutoff + multi-submitter concordance rescue
 # ---------------------------------------------------------------------------
 
 
@@ -1446,7 +1446,7 @@ def summarize_review_status(var_records: dict) -> list[dict]:
     records, so it's visible at a glance which of the ten defined statuses
     (notably "criteria provided, multiple submitters, no conflicts", the 2-star
     tier) never actually appear per-record in this file -- see 'How ClinVar
-    curation works' above and section 4's own docstring."""
+    curation works' above and section 5's own docstring."""
     counts: Counter = Counter()
     for records in var_records.values():
         for rec in records:
@@ -1508,7 +1508,7 @@ def compute_star_data(clinvar_tsv: Path, var_records: dict, map_to_mondo: dict, 
     """Single pass over clinvar.tsv computing summary counts (all star levels,
     including "2-star, computed") and a three-way mutually-exclusive partition
     of every gene-disease pair by evidence tier (pairs_ge3 / pairs_2star_concordance
-    / pairs_remaining, section 4). Also builds pair_submitters (every pair's full
+    / pairs_remaining, section 5). Also builds pair_submitters (every pair's full
     submitter roster, any star level), used by the ClinGen-coverage analysis."""
     variant_sets = {s: set() for s in STAR_LEVELS}
     pair_sets = {s: set() for s in STAR_LEVELS}
@@ -1517,7 +1517,7 @@ def compute_star_data(clinvar_tsv: Path, var_records: dict, map_to_mondo: dict, 
     # 2-star ReviewStatus (see 'How ClinVar curation works' above), a raw star_min=2 filter over
     # per-record data is identical to star_min=3 -- this instead reconstructs what a true >=2-star
     # population would be by rescuing pairs via >=MIN_CONCORDANT_SUBMITTERS concordant submitters,
-    # the same proxy mechanism section 4 uses. Not a raw filter; computed.
+    # the same proxy mechanism section 5 uses. Not a raw filter; computed.
     variant_set_computed2: set = set()
     pair_set_computed2: set = set()
     pair_variant_ids_computed2: dict = {}
@@ -1595,7 +1595,7 @@ def compute_star_data(clinvar_tsv: Path, var_records: dict, map_to_mondo: dict, 
     # >=3-star variants, tier 2 only its concordance-rescued ones, tier 3 all of them), which
     # makes those columns incomparable across tiers. This is the tier-independent measure --
     # every variant with >=1 P/LP record mapping to the pair -- used wherever pairs from
-    # different tiers appear side by side (section 5).
+    # different tiers appear side by side (section 6).
     all_pair_variants: dict = {}
     for (_gene_sym, gene_id, mondo_id), varids in pair_variant_ids[0].items():
         all_pair_variants.setdefault((gene_id, mondo_id), set()).update(varids)
@@ -1734,7 +1734,7 @@ def summarize_clingen_coverage(pair_submitters: dict, mondo_labels: dict) -> tup
 
 
 # ---------------------------------------------------------------------------
-# Section 6: CLNSIG / CLNREVSTAT / CLNVC crossfilter
+# Section 7: CLNSIG / CLNREVSTAT / CLNVC crossfilter
 # ---------------------------------------------------------------------------
 
 
@@ -1798,7 +1798,7 @@ def classify_size(ref: str, alt: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Section 5: Monarch KG gene-disease associations vs ClinVar
+# Section 6: Monarch KG gene-disease associations vs ClinVar
 # ---------------------------------------------------------------------------
 
 MONARCH_KG_URL = "https://data.monarchinitiative.org/monarch-kg/latest/monarch-kg.tar.gz"
@@ -1945,7 +1945,7 @@ SUPPORT_BUCKETS = ["1", "2", "3-4", "5-9", "10+"]
 
 # ClinVar's GENEINFO lists every locus overlapping a variant's position, not just the
 # causal gene, so a heavily-submitted CFTR variant also tags CFTR-AS1 and CFTR-AS2 and
-# the ingest minted a gene-disease pair for each (now fixed -- see section 7). These two
+# the ingest minted a gene-disease pair for each (now fixed -- see section 8). These two
 # LOC<GeneID> placeholders; these two patterns catch the other systematic offenders --
 # antisense/divergent transcripts overlapping a real disease gene, and uncharacterized
 # open reading frames. Flagged rather than dropped here, so the report can show how much
@@ -2146,7 +2146,7 @@ def build_monarch_comparison(
     )
 
     # Pair-level support profile over EVERY ClinVar pair (not just the Monarch-matched
-    # ones) -- the evidence behind section 7's threshold recommendation. tier 1/2 are what
+    # ones) -- the evidence behind section 8's threshold recommendation. tier 1/2 are what
     # production ingests today; the pooled submitter count is the pair-level alternative.
     all_xtab: Counter = Counter()
     for c in clinvar.values():
@@ -2190,6 +2190,33 @@ def build_monarch_comparison(
     }
 
 
+def summarize_submission_file(var_records: dict) -> dict:
+    """Field-level profile of submission_summary.txt.gz, computed from the already
+    in-memory var_records so it costs no extra I/O. Feeds section 4's input-file
+    breakdown -- in particular how much of ReportedPhenotypeInfo is the
+    "C3661900:not provided" placeholder, which maps to no MONDO term and so makes
+    those records invisible to every disease-mapping and concordance test."""
+    n_records = 0
+    placeholder = 0
+    submitters: set = set()
+    methods: Counter = Counter()
+    for records in var_records.values():
+        for rec in records:
+            n_records += 1
+            reported = rec["ReportedPhenotypeInfo"]
+            if "C3661900" in reported or "not provided" in reported.lower():
+                placeholder += 1
+            submitters.add(rec["Submitter"])
+            methods[rec["CollectionMethod"]] += 1
+    return {
+        "n_records": n_records,
+        "n_variants": len(var_records),
+        "n_submitters": len(submitters),
+        "placeholder_phenotype": placeholder,
+        "methods": methods,
+    }
+
+
 def compare_gene_attribution(clinvar_tsv: Path, data_dir: Path) -> dict:
     """GENEINFO's every-overlapping-locus list vs variant_summary's curated GeneID.
 
@@ -2208,6 +2235,8 @@ def compare_gene_attribution(clinvar_tsv: Path, data_dir: Path) -> dict:
 
     vs_symbols: dict = {}
     vs_sym_text: dict = {}
+    vs_field: Counter = Counter()
+    vcf_field: Counter = Counter()
     with gzip.open(data_dir / "variant_summary.txt.gz", "rt") as fh:
         for row in csv.DictReader(fh, delimiter="\t"):
             if row["Assembly"] != "GRCh38":
@@ -2215,6 +2244,12 @@ def compare_gene_attribution(clinvar_tsv: Path, data_dir: Path) -> dict:
             vid = row["VariationID"]
             vs_symbols.setdefault(vid, set()).add(row["GeneID"])
             vs_sym_text.setdefault(vid, set()).add(row["GeneSymbol"])
+            vs_field["rows_grch38"] += 1
+            if row["GeneID"] == "-1":
+                vs_field["geneid_minus1"] += 1
+            # large CNVs degrade GeneSymbol to prose ("covers 42 genes, none of which...")
+            if " " in row["GeneSymbol"] or len(row["GeneSymbol"]) > 40:
+                vs_field["symbol_prose"] += 1
 
     stats = {
         "geneinfo_attributions": 0,
@@ -2227,10 +2262,16 @@ def compare_gene_attribution(clinvar_tsv: Path, data_dir: Path) -> dict:
         "vs_minus1": 0,
         "geneinfo_hist": Counter(),
         "vs_hist": Counter(),
+        "vcf_field": vcf_field,
+        "vs_field": vs_field,
     }
 
     with open(clinvar_tsv, newline="") as fh:
         for row in csv.DictReader(fh, delimiter="\t"):
+            vcf_field["rows"] += 1
+            for col in ("CLNDISDB", "GENEINFO", "MC", "RS"):
+                if row[col] == ".":
+                    vcf_field[f"empty_{col}"] += 1
             gene_ids, gene_syms = make_genes_from_row(row["GENEINFO"])
             if not gene_ids:
                 continue
@@ -2326,7 +2367,7 @@ def build_clnsig_cube(
     has_literature, has_concordance), plus -- for rows with a
     submission_summary match -- the set of (gene, MONDO disease) pairs
     implied by that variant (any Pathogenic/Likely-pathogenic submission
-    record, any star; same disease-mapping logic as section 4's star_min=0
+    record, any star; same disease-mapping logic as section 5's star_min=0
     pass, since P/LP-family classification is a prerequisite for any disease
     mapping regardless of the variant's own aggregate CLNSIG/star shown
     here). Non-Pathogenic/Likely-pathogenic cells (VUS, B, LB, Conflicting,
@@ -2339,7 +2380,7 @@ def build_clnsig_cube(
     has_concordance: does this variant have >=MIN_CONCORDANT_SUBMITTERS
     distinct Submitters agreeing on the same disease + exact same
     ClinicalSignificance (Pathogenic/Likely-pathogenic family only) -- the
-    same signal used for section 4's rescue analysis. Variants absent from
+    same signal used for section 5's rescue analysis. Variants absent from
     submission_summary.txt get False for both (undetermined).
     in_strchive: does this variant's genomic footprint overlap one of
     STRchive's ~80 curated pathogenic short-tandem-repeat loci (hg38
@@ -2349,7 +2390,7 @@ def build_clnsig_cube(
     filter -- i.e. does variant_records_to_disease() at
     star_min=PRODUCTION_STAR_MIN with the
     >=MIN_CONCORDANT_SUBMITTERS concordance rescue still yield >=1 MONDO
-    disease? This is exactly the criterion behind section 4's headline
+    disease? This is exactly the criterion behind section 5's headline
     counts (and so, like them, it deliberately ignores process_row()'s
     separate HPO-overlap requirement). It is computed from per-submission
     ReviewStatus, NOT from the variant-level CLNREVSTAT star shown in the
@@ -2412,10 +2453,10 @@ def build_clnsig_cube(
             for gene_id, gene_sym in zip(gene_ids, gene_symbols):
                 pair_gene_symbol.setdefault(gene_id, gene_sym)
                 for mondo_id in dis:
-                    # keyed by (gene_id, disease) only, matching section 4's canonical pair
+                    # keyed by (gene_id, disease) only, matching section 5's canonical pair
                     # identity -- NCBIGene id is what production actually emits; a handful of
                     # ids (135 observed) carry >1 symbol spelling across records (gene renames),
-                    # which would otherwise inflate this count vs section 4's headline number.
+                    # which would otherwise inflate this count vs section 5's headline number.
                     pkey = (gene_id, mondo_id)
                     idx = pair_index.setdefault(pkey, len(pair_index))
                     entry = cell_map.setdefault(idx, {"n": 0, "sample": []})
@@ -2459,7 +2500,7 @@ def build_clnsig_cube(
 
 
 # ---------------------------------------------------------------------------
-# Section 8: structural variants / CNVs -- what's not in the VCF
+# Section 9: structural variants / CNVs -- what's not in the VCF
 # ---------------------------------------------------------------------------
 
 VARIANT_SUMMARY_URL = "https://ftp.ncbi.nlm.nih.gov/pub/clinvar/tab_delimited/variant_summary.txt.gz"
@@ -2620,7 +2661,7 @@ def build_sv_summary(data_dir: Path, map_to_mondo: dict) -> dict:
 def sv_only_gene_disease_pairs(sv_pairs: dict, snv_pair_set: set, mondo_labels: dict) -> list[dict]:
     """Gene-disease pairs with CNV/SV evidence (build_sv_summary's
     gene_disease_pairs) that have NO corresponding SNV/indel evidence anywhere
-    in clinvar.vcf.gz (snv_pair_set -- section 4's own star_min=0 pair_sets[0],
+    in clinvar.vcf.gz (snv_pair_set -- section 5's own star_min=0 pair_sets[0],
     any Pathogenic/Likely-pathogenic evidence, any review status). These pairs
     are structurally invisible to production: it only ever reads
     clinvar.vcf.gz, which has no way to represent a CNV or inversion at all,
@@ -2669,12 +2710,13 @@ def render_html(
     monarch_comparison: dict,
     gene_attribution: dict,
     variant_genes: dict,
+    submission_profile: dict,
 ) -> str:
     max_variants = max(r["variants"] for r in results.values()) or 1
     max_pairs = max(r["gene_disease_pairs"] for r in results.values()) or 1
 
     chart_width, bar_height, gap, left_pad = 640, 32, 16, 90
-    # Display order for section 4's chart/table: "2c" (2-star, computed) is inserted right after the
+    # Display order for section 5's chart/table: "2c" (2-star, computed) is inserted right after the
     # raw 2-star level, since it's the reconstructed version of that same tier -- see compute_star_data().
     CHART_LEVELS = [0, 1, 2, "2c", 3, 4]
 
@@ -2754,7 +2796,7 @@ def render_html(
                 disease = row["phenotype"]
             note_html = (
                 f"<div style='color:#64748b; font-size:11px; margin-top:2px;'>"
-                f"~{row['span']:,} bp &mdash; not in clinvar.vcf.gz, see section 8</div>"
+                f"~{row['span']:,} bp &mdash; not in clinvar.vcf.gz, see section 9</div>"
             )
 
         star_html = "&#9733;" * stars + "&#9734;" * (4 - stars)
@@ -2860,7 +2902,210 @@ def render_html(
         for r in review_status_rows
     )
 
-    # --- Section 5: Monarch KG reconciliation -----------------------------------------
+    # --- Section 4: input files ---------------------------------------------------------
+    ga = gene_attribution
+    sf = submission_profile
+    vcf_f = ga["vcf_field"]
+    vs_f = ga["vs_field"]
+
+    def pct(n, d):
+        return f"{100 * n / d:.1f}%" if d else "-"
+
+    vcf_field_rows = "".join(
+        f"<tr><td><code>{col}</code></td><td>{desc}</td>"
+        f"<td class='num'>{vcf_f['empty_' + col]:,}</td>"
+        f"<td class='num'>{pct(vcf_f['empty_' + col], vcf_f['rows'])}</td></tr>"
+        for col, desc in (
+            ("CLNDISDB", "Disease cross-references (MONDO / MedGen / OMIM / Orphanet / HPO)"),
+            ("GENEINFO", "Every gene overlapping the position &mdash; <strong>not</strong> the causal gene"),
+            ("MC", "Molecular consequence, SO terms"),
+            ("RS", "dbSNP rsID"),
+        )
+    )
+    method_rows = "".join(
+        f"<tr><td>{m}</td><td class='num'>{n:,}</td><td class='num'>{pct(n, sf['n_records'])}</td></tr>"
+        for m, n in sf["methods"].most_common(6)
+    )
+    placeholder_pct = pct(sf["placeholder_phenotype"], sf["n_records"])
+
+    input_files_html = f"""<h2 id="input-files">4. Input files: what the ingest reads</h2>
+<p class="subtitle">
+  Everything downstream is built from three ClinVar files plus two mapping files. They describe the
+  same variants at different granularities, and the choice of which field to trust in which file is
+  where most of this report's findings live. Row and field counts below are computed from the actual
+  downloaded release, not quoted from documentation.
+</p>
+
+<div class="table-wrap">
+<table>
+<thead><tr><th>File</th><th>Grain (one row =)</th><th>Rows</th><th>What the ingest takes from it</th></tr></thead>
+<tbody>
+<tr>
+  <td><code>clinvar.vcf.gz</code><br><span style="color:#64748b; font-size:11.5px;">&rarr; <code>clinvar.tsv</code></span></td>
+  <td>one <strong>variant</strong> (ClinVar VariationID)</td>
+  <td class="num">{vcf_f['rows']:,}</td>
+  <td>The variant itself, its aggregate classification, and its disease cross-references</td>
+</tr>
+<tr>
+  <td><code>submission_summary.txt.gz</code></td>
+  <td>one <strong>submission</strong> (variant &times; submitting lab)</td>
+  <td class="num">{sf['n_records']:,}</td>
+  <td>Per-lab classification, review status and reported phenotype &mdash; the evidence the star and concordance filters run over</td>
+</tr>
+<tr>
+  <td><code>variant_summary.txt.gz</code></td>
+  <td>one variant &times; genome build</td>
+  <td class="num">{vs_f['rows_grch38']:,} <span style="color:#64748b;">(GRCh38)</span></td>
+  <td>ClinVar's curated per-variant <strong>gene attribution</strong>, and the structural variants absent from the VCF (section 9)</td>
+</tr>
+<tr>
+  <td><code>mondo.sssom.tsv</code></td>
+  <td>one cross-reference mapping</td>
+  <td class="num">&mdash;</td>
+  <td>OMIM / Orphanet / MeSH &rarr; MONDO</td>
+</tr>
+<tr>
+  <td><code>MedGenIDMappings.txt.gz</code></td>
+  <td>one MedGen concept mapping</td>
+  <td class="num">&mdash;</td>
+  <td>MedGen CUI &rarr; MONDO, the primary disease route for submission records</td>
+</tr>
+</tbody>
+</table>
+</div>
+
+<h3>1. <code>clinvar.vcf.gz</code> &mdash; the variant-level view</h3>
+<p class="subtitle">
+  {vcf_f['rows']:,} variants, 43 INFO columns after <code>scripts/vcf_to_tsv.py</code> flattens it.
+  <code>ID</code> is the ClinVar VariationID and the join key to both other files. The fields that
+  matter:
+</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Field</th><th>Used for</th></tr></thead>
+<tbody>
+<tr><td><code>ID</code></td><td><code>SequenceVariant.id</code> (<code>CLINVAR:&lt;id&gt;</code>) and the join key to the other two files</td></tr>
+<tr><td><code>CLNHGVS</code></td><td><code>SequenceVariant.name</code> &mdash; genomic HGVS</td></tr>
+<tr><td><code>CLNDISDB</code></td><td>Disease cross-refs, parsed by <code>parse_CLNDISDB()</code>. This is where HPO terms come from, and the HPO overlap gates whether the transform emits anything at all</td></tr>
+<tr><td><code>MC</code></td><td><code>SequenceVariant.type</code> &mdash; SO molecular-consequence terms</td></tr>
+<tr><td><code>CLNREVSTAT</code></td><td>Aggregate review status. Recorded as an association qualifier and drives section 7's star panel. <strong>Not</strong> the star value the production filter uses &mdash; see below</td></tr>
+<tr><td><code>RS</code></td><td><code>SequenceVariant.xref</code> &mdash; dbSNP</td></tr>
+<tr><td><code>CLNSIG</code>, <code>CLNVC</code></td><td>Aggregate significance and variant type. Analysis only (section 7's crossfilter); the transform classifies from per-submission records instead</td></tr>
+<tr class="no"><td><code>ONC*</code>, <code>SCI*</code></td><td>Oncogenicity and somatic-impact classifications. Unused &mdash; this ingest is germline only</td></tr>
+</tbody>
+</table>
+</div>
+<p class="subtitle">How often those fields are simply absent:</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Field</th><th>Meaning</th><th>Rows with <code>.</code></th><th>%</th></tr></thead>
+<tbody>{vcf_field_rows}</tbody>
+</table>
+</div>
+
+<div class="summary-box" style="border-left:4px solid #b91c1c;">
+  <strong>&#9888; <code>GENEINFO</code> &mdash; the field that caused the antisense problem.</strong>
+  Format is <code>SYMBOL:GeneID|SYMBOL:GeneID|...</code>, and it lists <em>every locus whose span covers
+  the variant position</em>. That is what the field is documented to do &mdash; it is a positional
+  annotation, not a causal claim. The ingest read it as a causal claim.
+  <br><br>
+  For F508del, <code>GENEINFO</code> is
+  <code>CFTR:1080|CFTR-AS1:111082987</code>. Building a <code>VariantToGeneAssociation</code> from each
+  entry gave <code>CFTR-AS1</code> its own edge, and from there the antisense transcript inherited
+  CFTR's entire disease list and submitter roster &mdash; appearing as a gene-disease pair with 76
+  independent submitters behind it. The same happened for <code>TTN-AS1</code> (74),
+  <code>SYNGAP1-AS1</code> (71), <code>SNHG14</code>&rarr;Angelman, <code>RIF1</code>&rarr;nemaline
+  myopathy 2, <code>GH-LCR</code>, <code>NPHP3-ACAD11</code>, and NCBI's <code>LOC</code>&lt;GeneID&gt;
+  placeholders.
+  <br><br>
+  <strong>Fixed:</strong> gene attribution now comes from <code>variant_summary.txt.gz</code> instead.
+  {ga['multi_gene_variants']:,} variants had &gt;1 gene in <code>GENEINFO</code>; all of them resolve to
+  exactly one curated gene. See section 8 for the full before/after.
+</div>
+
+<h3>2. <code>submission_summary.txt.gz</code> &mdash; the per-submission evidence</h3>
+<p class="subtitle">
+  {sf['n_records']:,} submission records across {sf['n_variants']:,} variants from
+  <strong>{sf['n_submitters']:,} distinct submitters</strong> &mdash; roughly
+  {sf['n_records'] // max(sf['n_variants'], 1)} records per variant on average, though the distribution is
+  heavily skewed. This is the file the star cutoff and concordance rescue actually run over
+  (<code>make_variant_record_map()</code>).
+</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Field</th><th>Used for</th></tr></thead>
+<tbody>
+<tr><td><code>VariationID</code></td><td>Join key to the VCF</td></tr>
+<tr><td><code>ClinicalSignificance</code></td><td>Gated through <code>predicate_map</code> &mdash; only the Pathogenic / Likely-pathogenic family produces disease edges. Also the concordance key</td></tr>
+<tr><td><code>ReviewStatus</code></td><td>Scored by <code>review_star_map</code> &mdash; <strong>this</strong> is the star value the production filter uses</td></tr>
+<tr><td><code>ReportedPhenotypeInfo</code></td><td>Primary disease route: <code>MedGen:&lt;CUI&gt;</code> &rarr; MONDO</td></tr>
+<tr><td><code>SubmittedPhenotypeInfo</code></td><td>Fallback disease route when the MedGen lookup yields nothing</td></tr>
+<tr><td><code>Submitter</code></td><td>Identity behind concordance and every pooled-submitter count in this report</td></tr>
+<tr><td><code>CollectionMethod</code></td><td>Analysis only &mdash; flags <code>literature only</code> records</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="summary-box" style="border-left:4px solid #b91c1c;">
+  <strong>&#9888; Two fields in this file quietly discard evidence.</strong>
+  <br><br>
+  <strong><code>ReportedPhenotypeInfo</code> is a placeholder {placeholder_pct} of the time.</strong>
+  {sf['placeholder_phenotype']:,} of {sf['n_records']:,} records carry
+  <code>C3661900:not provided</code> (or an equivalent). That MedGen concept maps to no MONDO term, so
+  those records contribute <em>nothing</em> to disease mapping or concordance &mdash; no matter how
+  authoritative the submitter. Some of the highest-volume clinical labs submit this way as a matter of
+  course: GeneDx contributes 535 such Pathogenic/Likely-pathogenic records for SCN1A alone, CeGaT 148.
+  Pooled submitter counts throughout this report therefore <em>understate</em> support, systematically
+  and most severely for the busiest labs.
+  <br><br>
+  <strong><code>ReviewStatus</code> only ever takes 6 of the 10 documented values here</strong>, and
+  "criteria provided, multiple submitters, no conflicts" (2&#9733;) is never one of them &mdash; it is an
+  aggregate ClinVar computes <em>across</em> submitters and publishes only at the variant level. A
+  per-record <code>star_min=2</code> filter is therefore identical to <code>star_min=3</code>. See
+  section 3's table for the observed distribution.
+</div>
+<p class="subtitle">
+  <code>CollectionMethod</code> distribution, for context on what kind of evidence these records represent:
+</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>CollectionMethod</th><th>Records</th><th>%</th></tr></thead>
+<tbody>{method_rows}</tbody>
+</table>
+</div>
+
+<h3>3. <code>variant_summary.txt.gz</code> &mdash; curated gene attribution</h3>
+<p class="subtitle">
+  Added to the ingest to fix the <code>GENEINFO</code> defect. One row per variant per genome build, so
+  it must be filtered to <code>Assembly == GRCh38</code> &mdash; {vs_f['rows_grch38']:,} rows &mdash; or
+  every variant is counted twice. Also the only place ClinVar publishes structural variants, which the
+  VCF structurally cannot represent (section 9).
+</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Field</th><th>Used for</th></tr></thead>
+<tbody>
+<tr class="prod"><td><code>GeneID</code> / <code>GeneSymbol</code></td><td><strong>The gene ClinVar actually attributes the variant to</strong> &mdash; now the sole source of variant-gene edges (<code>make_variant_gene_map()</code>)</td></tr>
+<tr><td><code>HGNC_ID</code></td><td>Not yet used. Worth noting: this is the id space the Monarch KG keys genes on, so emitting it would remove the HGNC&harr;Entrez crosswalk section 6 has to build</td></tr>
+<tr><td><code>Assembly</code></td><td>Filter to GRCh38</td></tr>
+<tr><td><code>Type</code>, <code>Start</code>, <code>Stop</code></td><td>Structural-variant analysis in section 9</td></tr>
+<tr><td><code>Name</code></td><td>Transcript-anchored HGVS, e.g. <code>NM_000492.3(CFTR):c.1521_1523del</code>. Independent confirmation of the attributed gene</td></tr>
+<tr><td><code>NumberSubmitters</code></td><td>Not used &mdash; this report counts distinct submitters from <code>submission_summary</code> instead, since it needs them per (gene, disease) rather than per variant</td></tr>
+</tbody>
+</table>
+</div>
+<div class="summary-box">
+  <strong>Known rough edges in this file.</strong>
+  <code>GeneID = -1</code> on {vs_f['geneid_minus1']:,} GRCh38 rows means ClinVar declines to attribute a
+  gene; the ingest emits no gene edge for those and deliberately does <strong>not</strong> fall back to
+  <code>GENEINFO</code> ({ga['vs_minus1']:,} of them are variants present in the VCF).
+  <code>GeneSymbol</code> degrades to unparseable prose on {vs_f['symbol_prose']:,} rows &mdash; large
+  CNVs get text like "covers 42 genes, none of which curated" instead of a symbol, which is one reason
+  section 9's CNV analysis can resolve so few of them to a named gene.
+</div>
+"""
+
+    # --- Section 6: Monarch KG reconciliation -----------------------------------------
     mc = monarch_comparison
     mk_source_rows = "".join(
         f"<tr><td><code>{src}</code></td><td class='num'>{n:,}</td></tr>"
@@ -2945,7 +3190,7 @@ def render_html(
         + "</tbody></table>"
     )
 
-    monarch_section_html = f"""<h2 id="monarch-kg">5. Monarch KG gene-disease associations vs ClinVar</h2>
+    monarch_section_html = f"""<h2 id="monarch-kg">6. Monarch KG gene-disease associations vs ClinVar</h2>
 <p class="subtitle">
   The sections above derive gene-disease pairs from ClinVar submissions. This one asks how those
   line up with what the <a href="https://monarchinitiative.org/" target="_blank" rel="noopener">Monarch
@@ -2958,7 +3203,7 @@ def render_html(
   association, and what ClinVar implies that no curator has asserted.
   Matching is on exact <code>(NCBIGene id, MONDO id)</code>; gene ids are crosswalked from the KG's
   HGNC-keyed gene nodes via HGNC's own complete set. Every ClinVar gene here is the single gene ClinVar
-  asserts for the variant, not the VCF's positional <code>GENEINFO</code> list &mdash; see section 7.
+  asserts for the variant, not the VCF's positional <code>GENEINFO</code> list &mdash; see section 8.
 </p>
 
 <div class="total-boxes">
@@ -3049,7 +3294,7 @@ def render_html(
   reconcilable with an existing Monarch association; "gene absent from Monarch" rows are the uncurated
   ones. All {mc['n_clinvar_only']:,} rows are loaded &mdash; search matches gene, MONDO id, disease
   name and kinship. Every gene here is one ClinVar actually asserts for the contributing variants;
-  antisense transcripts, readthrough fusions and overlapping loci are gone (see section 7).
+  antisense transcripts, readthrough fusions and overlapping loci are gone (see section 8).
 </p>
 <div class="controls">
   <input id="monarch-only-search" class="search-box" type="text" placeholder="Filter by gene, MONDO id or disease...">
@@ -3080,7 +3325,7 @@ def render_html(
   Curated Monarch associations with <strong>no</strong> Pathogenic/Likely-pathogenic ClinVar evidence
   at all &mdash; no variant in <code>clinvar.vcf.gz</code> links that gene to that disease. Mostly
   Orphanet/OMIM assertions for conditions whose molecular evidence predates ClinVar submission, or
-  where the causal variants are structural (see section 8).
+  where the causal variants are structural (see section 9).
   <br><br>
   <strong>"In MONDO" filter.</strong> An association's disease id is not automatically a live MONDO
   term: the KG can carry an edge whose term MONDO has since retired &mdash; Orphanet still asserts
@@ -3176,7 +3421,7 @@ def render_html(
 </div>
 """
 
-    # --- Section 7: consolidated ingest recommendation ----------------------------------
+    # --- Section 8: consolidated ingest recommendation ----------------------------------
     all_support_table = support_table(mc["all_xtab"], TIER_LABELS)
     proj2, proj3 = mc["projected"][2], mc["projected"][3]
     gain3 = proj3 - mc["ingested_today"]
@@ -3191,7 +3436,7 @@ def render_html(
     ga_multi_after = ga["multi_gene_variants"] - ga["multi_resolved_to_one"]
     ga_minus1_pct = 100 * ga["vs_minus1"] / max(ga["vs_attributions"], 1)
 
-    recommendation_html = f"""<h2 id="ingest-recommendation">7. New ClinVar ingest recommendation</h2>
+    recommendation_html = f"""<h2 id="ingest-recommendation">8. New ClinVar ingest recommendation</h2>
 <p class="subtitle">
   Everything above is measurement. This section is the actionable summary: concrete changes to
   <code>src/clinvar_helpers.py</code>, ordered by value-per-unit-risk, each tied to the evidence that
@@ -3255,7 +3500,7 @@ def render_html(
 <p class="subtitle">
   <code>concordance_groups()</code> keys agreement on <code>(mondo_id, ClinicalSignificance)</code>, so
   two labs describing the same condition under synonymous MONDO terms never corroborate each other.
-  Section 5 measured the cost: <strong>{reconcilable:,} of {kinship_total:,}
+  Section 6 measured the cost: <strong>{reconcilable:,} of {kinship_total:,}
   ({reconcilable_pct:.1f}%)</strong> ClinVar-only pairs are the same relationship Monarch already
   asserts, recorded at a different level of the hierarchy. SCN1A is the worked example &mdash;
   <code>MONDO:0800491</code> and <code>MONDO:0100135</code> are siblings, so no exact-id rule can ever
@@ -3335,7 +3580,7 @@ def render_html(
   <code>variant_summary.txt.gz</code> (~440MB) is now a production dependency in
   <code>download.yaml</code>.
   <strong>Still available:</strong> <code>HGNC_ID</code> in the same file is the id space the Monarch KG
-  keys genes on, so emitting it would remove the HGNC&harr;Entrez crosswalk section 5 builds today.
+  keys genes on, so emitting it would remove the HGNC&harr;Entrez crosswalk section 6 builds today.
   <br><br>
   This fixed the <em>gene</em> axis only. The MONDO fragmentation in recommendation 2 is the
   <em>disease</em> axis and is untouched by it.
@@ -3361,17 +3606,17 @@ def render_html(
   documents them as 0&#9733;</a> &mdash; contradicting this report's own curation table. Corrected in
   <code>clinvar_helpers.py</code>. <strong>Production output is unchanged</strong>
   (<code>star_min={PRODUCTION_STAR_MIN}</code>, so 0 and 1 both fail identically, and the concordance
-  rescue ignores stars); it moves 112,154 variants from 1&#9733; to 0&#9733; in section 6's crossfilter
+  rescue ignores stars); it moves 112,154 variants from 1&#9733; to 0&#9733; in section 7's crossfilter
   and fixes the star column in section 3's table.
 </p>
 """
 
     production_pairs_today = results[PRODUCTION_STAR_MIN]["gene_disease_pairs"]
-    biolink_proposal_html = f"""<h2 id="biolink-proposal">9. Beyond SNVs: reframing the Biolink model for variants</h2>
+    biolink_proposal_html = f"""<h2 id="biolink-proposal">10. Beyond SNVs: reframing the Biolink model for variants</h2>
 <p class="subtitle">
   Everything above measures how well production's <em>existing</em> model performs. This closing section is
   different in kind: not an analysis of the downloaded data, but a proposal for discussion, informed by what
-  that analysis found. It describes the Biolink model this ingest emits today, the gaps sections 4&ndash;9
+  that analysis found. It describes the Biolink model this ingest emits today, the gaps sections 5&ndash;10
   expose (structural variants excluded entirely; no way to represent per-gene or functional-mechanism
   differences), and a concrete reframing that addresses both &mdash; grounded in Biolink Model classes and
   qualifier slots that already exist, not invented from scratch.
@@ -3402,7 +3647,7 @@ def render_html(
 <div class="table-wrap" style="margin-top:1rem;">
 <table>
 <tr><th>Slot</th><th>Populated from</th><th>What it actually captures</th></tr>
-<tr><td><code>SequenceVariant.id</code></td><td><code>CLINVAR:{{ClinVar VariationID}}</code></td><td>One node per ClinVar variant passing the production filter (&ge;{PRODUCTION_STAR_MIN}&#9733; or &ge;{MIN_CONCORDANT_SUBMITTERS} concordant submitters, see section 4)</td></tr>
+<tr><td><code>SequenceVariant.id</code></td><td><code>CLINVAR:{{ClinVar VariationID}}</code></td><td>One node per ClinVar variant passing the production filter (&ge;{PRODUCTION_STAR_MIN}&#9733; or &ge;{MIN_CONCORDANT_SUBMITTERS} concordant submitters, see section 5)</td></tr>
 <tr><td><code>SequenceVariant.type</code></td><td>VCF <code>MC</code> field</td><td>Sequence Ontology <strong>molecular consequence</strong> terms (e.g. missense_variant) &mdash; one list, for the whole variant, regardless of how many genes it touches</td></tr>
 <tr><td><code>VariantToGeneAssociation</code></td><td>VCF <code>GENEINFO</code> field</td><td>One identical <code>is_sequence_variant_of</code> edge per gene in <code>GENEINFO</code> &mdash; no per-gene distinction at all</td></tr>
 <tr><td><code>VariantToDiseaseAssociation</code></td><td><code>submission_summary.txt</code></td><td><code>causes</code> / <code>associated_with_increased_likelihood_of</code>, qualified only by <code>CLNREVSTAT</code></td></tr>
@@ -3411,7 +3656,7 @@ def render_html(
 </div>
 <p class="subtitle">
   With today's production settings this produces <strong>{production_pairs_today:,}</strong> gene-disease
-  pairs (star_min&ge;{PRODUCTION_STAR_MIN} column, section 4) &mdash; and, as section 8 showed, misses at
+  pairs (star_min&ge;{PRODUCTION_STAR_MIN} column, section 5) &mdash; and, as section 9 showed, misses at
   least <strong>{sv_only_pairs_count:,}</strong> more pairs whose only evidence is a CNV, inversion, or other
   structural variant that <code>clinvar.vcf.gz</code> cannot represent at all.
 </p>
@@ -3517,7 +3762,7 @@ def render_html(
   duplication of exons 4&ndash;6 is <em>whole_gene</em>-scale relative to nothing else nearby, but the exact
   same physical event, if it happened to span a neighboring gene's promoter, would need to be represented as
   <em>regulatory_only</em> for that second gene &mdash; a completely different claim from "this gene lost
-  coding sequence," using the identical variant. Section 8's CNV/SV-only pairs table already had to restrict
+  coding sequence," using the identical variant. Section 9's CNV/SV-only pairs table already had to restrict
   itself to single-gene rows precisely because <code>variant_summary.txt</code>'s own <code>GeneID</code>
   column degrades to an unusable <code>-1</code> sentinel the moment more than one gene is involved &mdash;
   ClinVar's own source data doesn't give us clean per-gene impact today, which is exactly the gap
@@ -3548,7 +3793,7 @@ def render_html(
   class) alongside <code>SequenceVariant</code>, or can one node class serve both, differentiated only by
   the variant-class value in <code>type</code>?</li>
   <li>Since ClinVar's own gene attribution for multi-gene CNVs isn't usable (the <code>GeneID</code>
-  <code>-1</code> problem from section 8), whose job is computing real per-gene coordinate overlap &mdash;
+  <code>-1</code> problem from section 9), whose job is computing real per-gene coordinate overlap &mdash;
   this ingest, at transform time, using a fetched gene model per variant (expensive, as the Ensembl calls in
   this report already show); or a separate upstream annotation step this ingest would just consume?</li>
 </ol>
@@ -3659,12 +3904,13 @@ def render_html(
   <a href="#purpose">1. Purpose</a>
   <a href="#illustrative-examples">2. Illustrative examples</a>
   <a href="#clinvar-curation">3. ClinVar curation</a>
-  <a href="#star-cutoff">4. Star cutoff &amp; pair tiers</a>
-  <a href="#monarch-kg">5. Monarch KG vs ClinVar</a>
-  <a href="#crossfilter">6. Crossfilter</a>
-  <a href="#ingest-recommendation">7. Ingest recommendation</a>
-  <a href="#structural-variants">8. Structural variants</a>
-  <a href="#biolink-proposal">9. Biolink proposal</a>
+  <a href="#input-files">4. Input files</a>
+  <a href="#star-cutoff">5. Star cutoff &amp; pair tiers</a>
+  <a href="#monarch-kg">6. Monarch KG vs ClinVar</a>
+  <a href="#crossfilter">7. Crossfilter</a>
+  <a href="#ingest-recommendation">8. Ingest recommendation</a>
+  <a href="#structural-variants">9. Structural variants</a>
+  <a href="#biolink-proposal">10. Biolink proposal</a>
 </nav>
 
 <h2 id="purpose">1. Purpose</h2>
@@ -3701,7 +3947,7 @@ def render_html(
   "large recurrent" CNVs both come from the same 22q11.21 region (the classic DiGeorge/velocardiofacial
   locus) to show a deletion and its reciprocal duplication side by side; the two "single-gene" CNVs both
   come from DMD, whose exon-level deletions and duplications are the textbook example of this category.
-  Structural types (CNVs, inversion) aren't in <code>clinvar.vcf.gz</code> at all -- see section 8.
+  Structural types (CNVs, inversion) aren't in <code>clinvar.vcf.gz</code> at all -- see section 9.
 </p>
 <div class="xf-panels" style="grid-template-columns: repeat(3, 1fr);">
 {example_cards_html}
@@ -3746,7 +3992,7 @@ def render_html(
   <td>2</td><td>criteria provided, multiple submitters, no conflicts</td>
   <td>&ge;2 independent submitters used criteria and agree &mdash; an aggregate ClinVar computes
   <em>across</em> a variant's submitters, which is why it can never appear on any single submission record
-  (see section 4's own docstring for why this matters to production's inclusion filter).</td>
+  (see section 5's own docstring for why this matters to production's inclusion filter).</td>
 </tr>
 <tr>
   <td>3</td><td>reviewed by expert panel</td>
@@ -3770,10 +4016,10 @@ def render_html(
   &mdash; the rest, greyed out below, are defined but never actually observed on any individual submission
   record in this release. Note in particular that the 2&#9733; row is empty: as discussed above, it's an
   aggregate ClinVar computes across a variant's submitters and only ever shows up in the VCF's
-  <code>CLNREVSTAT</code> (section 6), never here.
+  <code>CLNREVSTAT</code> (section 7), never here.
   The Stars column is scored by <code>clinvar_helpers.review_star_map</code> &mdash; the same single
-  mapping that gates the production ingest, drives section 4's <code>star_min</code> sweep, and
-  labels section 6's <code>CLNREVSTAT</code> panel &mdash; and it now matches
+  mapping that gates the production ingest, drives section 5's <code>star_min</code> sweep, and
+  labels section 7's <code>CLNREVSTAT</code> panel &mdash; and it now matches
   <a href="https://www.ncbi.nlm.nih.gov/clinvar/docs/review_status/" target="_blank" rel="noopener">ClinVar's
   published star table</a> value-for-value, including the four "no assertion / no classification" statuses
   that belong at 0&#9733; rather than 1&#9733;.
@@ -3793,21 +4039,23 @@ def render_html(
   moment it's downloaded; (3) ClinGen's expert panels cover only a small, deliberately prioritized slice of
   genes &mdash; most genes have no VCEP at all, so 3&ndash;4&#9733; evidence is systematically concentrated
   in a handful of well-studied disease genes (like the LMNA and SMCHD1 examples above), and its absence
-  elsewhere reflects a lack of formal panel review, not necessarily a lack of confidence. Section 4
+  elsewhere reflects a lack of formal panel review, not necessarily a lack of confidence. Section 5
   below quantify exactly how much of production's evidence lives below the expert-panel tier, and test
   whether independent multi-submitter agreement is a reasonable proxy for curation quality when a formal
   panel review hasn't happened.
 </p>
 
 <p class="subtitle">
-  Sections 4&ndash;6 are the analyses over the downloaded ClinVar release: (4) review-star cutoff
+  Sections 5&ndash;7 are the analyses over the downloaded ClinVar release: (4) review-star cutoff
   impact on the production disease-mapping filter, (5) reconciliation against the Monarch KG's
   curated gene-disease associations, and (6) a crossfilter over ClinVar's own variant-level
-  classification and review-status fields. Section 7 turns those findings into concrete ingest
-  changes; section 8 covers the structural variants the VCF omits entirely.
+  classification and review-status fields. Section 8 turns those findings into concrete ingest
+  changes; section 9 covers the structural variants the VCF omits entirely.
 </p>
 
-<h2 id="star-cutoff">4. Review-star cutoff impact on variant &amp; gene-disease-pair counts</h2>
+{input_files_html}
+
+<h2 id="star-cutoff">5. Review-star cutoff impact on variant &amp; gene-disease-pair counts</h2>
 <p class="subtitle">
   Effect of <code>var2disease_star_min</code> on variant &amp; gene-disease-pair counts, using
   per-submission evidence from <code>submission_summary.txt</code>. Production currently uses
@@ -3831,7 +4079,7 @@ def render_html(
   <code>star_min=2</code> filter over per-record data is identical to <code>star_min=3</code> (compare the
   two rows above). This row instead <em>reconstructs</em> what a true &ge;2&#9733; population would be:
   the raw &ge;2&#9733; pairs, plus any pair rescued by &ge;{MIN_CONCORDANT_SUBMITTERS} independent concordant
-  submitters &mdash; the same proxy mechanism section 4 below uses, applied here directly to the headline
+  submitters &mdash; the same proxy mechanism section 5 below uses, applied here directly to the headline
   counts rather than shown as a separate rescue analysis.
 </p>
 
@@ -3842,7 +4090,7 @@ def render_html(
   than one. Tier 1 (raw &ge;3&#9733;) is checked first; anything left over is checked against 2&#9733;
   concordance; anything <em>still</em> left over falls to tier 3. Gene attribution throughout is the single gene ClinVar
   asserts for each variant (<code>variant_summary.txt.gz</code>), not the VCF's positional
-  <code>GENEINFO</code> list &mdash; see section 7 for what that changed.
+  <code>GENEINFO</code> list &mdash; see section 8 for what that changed.
 </p>
 
 <h3 style="margin-top:1.75rem;">Tier 1: star_min &ge;3 (raw)</h3>
@@ -3880,7 +4128,7 @@ def render_html(
 <p class="subtitle">
   Pairs with <strong>no</strong> raw &ge;3&#9733; evidence anywhere, reconstructed instead via
   &ge;{MIN_CONCORDANT_SUBMITTERS} independent concordant submitters &mdash; the same proxy mechanism
-  section 4 below uses for its own, more detailed rescue analysis (submitter counts, literature flags,
+  section 5 below uses for its own, more detailed rescue analysis (submitter counts, literature flags,
   etc. per pair). Mutually exclusive of Tier 1 by construction: any pair already in Tier 1 is excluded
   here even if it would also separately qualify for concordance.
 </p>
@@ -4005,26 +4253,26 @@ def render_html(
 
 {monarch_section_html}
 
-<h2 id="crossfilter">6. Clinical significance &amp; review-status crossfilter</h2>
+<h2 id="crossfilter">7. Clinical significance &amp; review-status crossfilter</h2>
 <p class="subtitle">
   Built from all {total_variants:,} variants in <code>clinvar.vcf.gz</code>, using ClinVar's own
   aggregate, variant-level fields (CLNSIG / CLNREVSTAT / CLNVC) &mdash; not the per-submission
-  evidence used in section 4. <code>CLNREVSTAT</code> here is ClinVar's real aggregate
-  review status, so it genuinely includes the "2 star" tier that's absent per-record in section 4
+  evidence used in section 5. <code>CLNREVSTAT</code> here is ClinVar's real aggregate
+  review status, so it genuinely includes the "2 star" tier that's absent per-record in section 5
   &mdash; <strong>two different star systems share the word "stars" in this report</strong>, and
   the star panel below is the variant-level one. Because of that, the star panel alone can't
   express production's inclusion rule; the <strong>"In production ingest"</strong> panel does,
-  re-running section 4's exact criterion
+  re-running section 5's exact criterion
   (&ge;{PRODUCTION_STAR_MIN}&#9733; on some individual submission record, or
   &ge;{MIN_CONCORDANT_SUBMITTERS} concordant submitters) per variant, so every panel here can be
   crossfiltered against what the ingest actually keeps.
   Toggle checkboxes in any panel; the other panels re-filter to match, and the totals update live.
   Each panel's own bars stay visible when toggled off (dimmed) so you can see what you're excluding.
   Gene-disease pairs are only ever produced from Pathogenic/Likely-pathogenic evidence (same as
-  section 4) &mdash; filtering to VUS/Benign/Conflicting/Other/Not-classified alone will
+  section 5) &mdash; filtering to VUS/Benign/Conflicting/Other/Not-classified alone will
   always show 0 pairs, which is expected: production never creates disease edges for those.
   "Has literature submission" and "Multiple concordant submitters" are per-variant flags computed
-  from <code>submission_summary.txt</code> (same source as section 4, not the VCF fields
+  from <code>submission_summary.txt</code> (same source as section 5, not the VCF fields
   above) &mdash; variants absent from that file show as "No" for both. "Overlaps STRchive locus"
   checks the variant's genomic footprint (POS through POS+len(REF)-1) against the hg38 coordinates
   of <a href="https://strchive.org/loci/" target="_blank" rel="noopener">STRchive</a>'s ~80 curated,
@@ -4067,9 +4315,9 @@ def render_html(
     </div>
     <p style="font-size:11.5px; color:#64748b; margin:0.6rem 0 0;">
       ClinVar's <em>variant-level</em> star rating, scored by the same
-      <code>review_star_map</code> section 4 use. The 2&#9733; tier is real here (and
+      <code>review_star_map</code> section 5 use. The 2&#9733; tier is real here (and
       large) because it's an aggregate across a variant's submitters &mdash; it never appears on
-      an individual submission record, so it can't be selected per-record in section 4.
+      an individual submission record, so it can't be selected per-record in section 5.
       Ticking &ge;3&#9733; here is <strong>not</strong> the same as production's filter; use the
       "In production ingest" panel for that.
     </p>
@@ -4122,17 +4370,17 @@ def render_html(
       <button data-dim="production" data-action="none">None</button>
     </div>
     <p style="font-size:11.5px; color:#64748b; margin:0.6rem 0 0;">
-      The actual section 4 criterion, re-run per variant:
+      The actual section 5 criterion, re-run per variant:
       <code>variant_records_to_disease(star_min={PRODUCTION_STAR_MIN},
       rescue_min_submitters={MIN_CONCORDANT_SUBMITTERS})</code> yields &ge;1 MONDO disease.
       Computed from per-submission <code>ReviewStatus</code>, not from the <code>CLNREVSTAT</code>
       stars in the panel above &mdash; so this is the dimension to tick when you want "what
       production actually ingests" rather than "what ClinVar rates highly". Like sections
       1&ndash;2 it ignores <code>process_row()</code>'s separate HPO-overlap requirement.
-      Selecting "Yes" alone reproduces section 4's "2&#9733; (computed)" <em>variant</em> count exactly.
+      Selecting "Yes" alone reproduces section 5's "2&#9733; (computed)" <em>variant</em> count exactly.
       The gene-disease pair total will read slightly higher: pairs in this section are enumerated from
       every Pathogenic/Likely-pathogenic record on a variant (any star), so a variant that passes on one
-      disease also contributes its other diseases here &mdash; section 4's pair count applies the
+      disease also contributes its other diseases here &mdash; section 5's pair count applies the
       threshold per (variant, disease) instead.
     </p>
   </div>
@@ -4147,7 +4395,7 @@ def render_html(
   ClinVar record), capped at 5 per row since some pairs -- BRCA1/BRCA2 top out around 3-5k
   contributing variants -- have far too many to list in full; "# variants" is always the exact count.
   Genes are the single ClinVar-asserted gene per variant, not the VCF's positional
-  <code>GENEINFO</code> list &mdash; see section 7.
+  <code>GENEINFO</code> list &mdash; see section 8.
 </p>
 <div class="controls">
   <button id="xf-apply" class="btn-primary">Apply filters</button>
@@ -4178,9 +4426,9 @@ def render_html(
 
 {recommendation_html}
 
-<h2 id="structural-variants">8. Structural variants &amp; CNVs &mdash; what's not in the VCF</h2>
+<h2 id="structural-variants">9. Structural variants &amp; CNVs &mdash; what's not in the VCF</h2>
 <p class="subtitle">
-  Sections 4&ndash;6 above are built entirely from <code>clinvar.vcf.gz</code> and
+  Sections 5&ndash;7 above are built entirely from <code>clinvar.vcf.gz</code> and
   <code>submission_summary.txt</code> &mdash; both of which require a fixed genomic
   position plus REF/ALT sequence. That structurally excludes copy-number gain/loss,
   translocations, and other large rearrangements. ClinVar publishes those separately in
@@ -4276,7 +4524,7 @@ def render_html(
   "covers N genes" regional entries are excluded &mdash; there's no reliable per-gene id to pair with a
   disease for those, see <code>is_single_clean_gene_symbol()</code>), resolved to a MONDO disease, whose
   (gene, disease) pair <strong>never once appears</strong> anywhere in the star_min=0 SNV/indel pair set
-  from section 4 above (any review status, any evidence at all).
+  from section 5 above (any review status, any evidence at all).
 </p>
 <div class="summary-box">
   <strong>{sv_only_pairs_count:,}</strong> of <strong>{sv_gene_disease_pairs_count:,}</strong> single-gene
@@ -4412,7 +4660,7 @@ function createPaginatedTable(config) {{
   }};
 }}
 
-// Shared by all three evidence-tier pairs tables in section 4 (and reusable for similar
+// Shared by all three evidence-tier pairs tables in section 5 (and reusable for similar
 // gene/mondo pairs tables elsewhere): plain sort+search over an in-memory array, no
 // pagination -- matches this report's existing "show everything, let search narrow it
 // down" pattern for pairs-scale tables (hundreds to tens of thousands of rows).
@@ -4956,6 +5204,13 @@ def main():
     variant_genes = make_variant_gene_map(args.data_dir / "variant_summary.txt.gz")
     print(f"Gene attribution: {len(variant_genes):,} variants with a ClinVar-asserted gene")
 
+    submission_profile = summarize_submission_file(var_records)
+    print(
+        f"submission_summary: {submission_profile['n_records']:,} records, "
+        f"{submission_profile['n_submitters']:,} submitters, "
+        f"{submission_profile['placeholder_phenotype']:,} with a 'not provided' phenotype"
+    )
+
     review_status_rows = summarize_review_status(var_records)
     print("\nReviewStatus distribution in submission_summary.txt (per-record):")
     for r in review_status_rows:
@@ -5035,8 +5290,8 @@ def main():
     print(
         f"\nVariants passing the production filter (>={PRODUCTION_STAR_MIN}★ per-record or "
         f">={MIN_CONCORDANT_SUBMITTERS} concordant): {in_prod:,} "
-        f"(section 4 star_min={PRODUCTION_STAR_MIN} variants: {results[PRODUCTION_STAR_MIN]['variants']:,}; "
-        f"section 4 '2★ computed' variants: {results['2c']['variants']:,})"
+        f"(section 5 star_min={PRODUCTION_STAR_MIN} variants: {results[PRODUCTION_STAR_MIN]['variants']:,}; "
+        f"section 5 '2★ computed' variants: {results['2c']['variants']:,})"
     )
     all_pairs = {p["i"] for r in cube for p in r["pairs"]}
     print(f"\nGene-disease pairs across all filters: {len(all_pairs):,}")
@@ -5109,6 +5364,7 @@ def main():
             monarch_comparison,
             gene_attribution,
             variant_genes,
+            submission_profile,
         )
     )
     print(f"\nWrote {args.output}")
