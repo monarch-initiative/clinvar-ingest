@@ -22,16 +22,22 @@ CONTRIBUTES_TO = "biolink:contributes_to"
 
 pred_to_negated = {CAUSES: False, ASSOCIATED_WITH: False, CONTRIBUTES_TO: False}
 
+# Star ratings exactly as ClinVar documents them:
 # https://www.ncbi.nlm.nih.gov/clinvar/docs/review_status/
+# Note "criteria_provided,_multiple_submitters,_no_conflicts" (2 stars) is an
+# aggregate ClinVar computes *across* a variant's submitters -- it appears in the
+# VCF's variant-level CLNREVSTAT but never on an individual submission record in
+# submission_summary.txt, so a per-record star_min=2 filter is identical to
+# star_min=3. See analysis/clinvar_report.py sections 1-3.
 review_star_map = {
     "practice_guideline": 4,
     "reviewed_by_expert_panel": 3,
     "criteria_provided,_multiple_submitters,_no_conflicts": 2,
     "criteria_provided,_conflicting_classifications": 1,
-    "no_classifications_from_unflagged_records": 1,
     "criteria_provided,_single_submitter": 1,
-    "no_assertion_criteria_provided": 1,
-    "no_classification_provided": 1,
+    "no_assertion_criteria_provided": 0,
+    "no_classification_provided": 0,
+    "no_classifications_from_unflagged_records": 0,
     "no_classification_for_the_single_variant": 0,
     "flagged_submission": 0,
     ".": 0,
@@ -120,6 +126,55 @@ def make_medgen_to_mondo_map(medgen_path):
                         map_to_mondo[mdg_id] = {}
                     map_to_mondo[mdg_id][dis_id] = ""
     return map_to_mondo
+
+
+def make_variant_gene_map(variant_summary_path, assembly="GRCh38"):
+    """ClinVar's own per-variant gene attribution, from variant_summary.txt.gz.
+
+    The VCF's GENEINFO field is populated *positionally* -- it lists every gene
+    whose span covers the variant, so antisense transcripts, divergent
+    transcripts and neighbouring loci ride along with the causal gene. Building
+    VariantToGeneAssociation edges from it asserts non-viable gene-disease
+    relationships: a CFTR variant also tags CFTR-AS1, which then inherits
+    cystic fibrosis and CFTR's entire submitter roster.
+
+    variant_summary.txt.gz carries the gene ClinVar itself assigns to each
+    variant record. Measured over the current release, it makes 4,438,486
+    attributions where GENEINFO makes 4,982,691, and reduces the
+    antisense/uncharacterized-ORF share from 2.97% to 0.09%. Every one of the
+    479,140 variants GENEINFO assigns to >1 gene collapses to exactly one
+    curated GeneID.
+
+    GeneID == -1 means ClinVar declines to attribute the variant to a gene
+    (4,109 variants, 0.09%). Those are omitted here and deliberately get NO
+    fallback to GENEINFO -- an unasserted gene is left unasserted, and the
+    variant still contributes its disease and phenotype edges.
+    """
+    gene_map = {}
+    symbol_pool = {}
+    hcols = None
+    with gzip.open(variant_summary_path, "rt") as infile:
+        for line in infile:
+            line = line.strip("\r").strip("\n")
+            if not line:
+                continue
+            if line[0] == "#":
+                header = line.split("\t")
+                header[0] = header[0][1:]
+                hcols = {k: i for i, k in enumerate(header)}
+                continue
+            cols = line.split("\t")
+            if cols[hcols["Assembly"]] != assembly:
+                continue
+            gene_id = cols[hcols["GeneID"]]
+            if gene_id == "-1" or not gene_id:
+                continue
+            symbol = cols[hcols["GeneSymbol"]]
+            # gene symbols repeat across millions of rows -- intern them so the map
+            # holds one string per gene rather than one per variant
+            symbol = symbol_pool.setdefault(symbol, symbol)
+            gene_map[cols[hcols["VariationID"]]] = ("NCBIGene:{}".format(gene_id), symbol)
+    return gene_map
 
 
 def make_genes_from_row(gene_list):
@@ -304,22 +359,28 @@ def map_mondo_to_hp(group_info, disease_ids):
     return mondo_to_hp
 
 
-def process_row(row, var_records, map_to_mondo):
+def process_row(row, var_records, map_to_mondo, variant_genes):
     """Process a single row from the ClinVar VCF and return a list of biolink entities.
 
     Returns an empty list if the row should be skipped (no records, no associations).
+
+    Gene attribution comes from variant_genes (see make_variant_gene_map), NOT from
+    the row's GENEINFO field -- GENEINFO lists every locus overlapping the variant's
+    position, which would mint gene-disease associations for antisense transcripts and
+    neighbours. A variant ClinVar declines to attribute to a gene simply produces no
+    VariantToGeneAssociation; its disease and phenotype edges are unaffected.
     """
     entities = []
 
     varid = str(row["ID"])
     raw_diss_info = row["CLNDISDB"]
-    ginfo = row["GENEINFO"]
     so_info = [v.split("|")[0] for v in row["MC"].split(",") if "SO:" in v]
 
     if varid not in var_records:
         return []
 
-    gene_ids, gene_symbols = make_genes_from_row(ginfo)
+    gene_entry = variant_genes.get(varid)
+    gene_ids = [gene_entry[0]] if gene_entry else []
 
     disease_ids, disease_predicates, org_predicates = variant_records_to_disease(
         var_records[varid],

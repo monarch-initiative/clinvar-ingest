@@ -12,6 +12,12 @@
 - url: https://ftp.ncbi.nlm.nih.gov/pub/clinvar/tab_delimited/submission_summary.txt.gz
   local_name: data/submission_summary.txt.gz
 
+# ClinVar's curated per-variant gene attribution (GeneID / GeneSymbol / HGNC_ID).
+# Used instead of the VCF's GENEINFO field, which lists every locus overlapping the
+# variant position -- see make_variant_gene_map() in src/clinvar_helpers.py.
+- url: https://ftp.ncbi.nlm.nih.gov/pub/clinvar/tab_delimited/variant_summary.txt.gz
+  local_name: data/variant_summary.txt.gz
+
 - url: https://data.monarchinitiative.org/mappings/latest/mondo.sssom.tsv
   local_name: data/mondo.sssom.tsv
 

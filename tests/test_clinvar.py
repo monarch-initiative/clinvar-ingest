@@ -173,6 +173,25 @@ MAP_TO_MONDO = {
 }
 
 
+# ---- Mock data: variant_genes (ClinVar's curated per-variant gene attribution) ----
+# Mirrors make_variant_gene_map()'s output: VariationID -> (gene curie, symbol), one
+# gene per variant. Contrast with each row's GENEINFO field, which lists every
+# overlapping locus -- case 6's GENEINFO carries USH2A-AS2 alongside USH2A, and the
+# antisense transcript must NOT produce a gene association.
+VARIANT_GENES = {
+    "1296989": ("NCBIGene:2475", "MTOR"),
+    "2505295": ("NCBIGene:4653", "MYOC"),
+    "8797": ("NCBIGene:659", "BMPR2"),
+    "156702": ("NCBIGene:2475", "MTOR"),
+    "179773": ("NCBIGene:7399", "USH2A"),
+    "654211": ("NCBIGene:462", "SERPINC1"),
+    "9000001": ("NCBIGene:4653", "MYOC"),
+    "9000002": ("NCBIGene:4653", "MYOC"),
+    "9000003": ("NCBIGene:4653", "MYOC"),
+    # 9000004 deliberately absent: ClinVar GeneID == -1, i.e. no asserted gene
+}
+
+
 #################################################################
 ### Rows taken from vcf file that have our desired test cases ###
 
@@ -686,52 +705,52 @@ def test_case10_row():
 
 @pytest.fixture
 def test_case1_entities(test_case1_row):
-    return process_row(test_case1_row, VAR_RECORDS, MAP_TO_MONDO)
+    return process_row(test_case1_row, VAR_RECORDS, MAP_TO_MONDO, VARIANT_GENES)
 
 
 @pytest.fixture
 def test_case2_entities(test_case2_row):
-    return process_row(test_case2_row, VAR_RECORDS, MAP_TO_MONDO)
+    return process_row(test_case2_row, VAR_RECORDS, MAP_TO_MONDO, VARIANT_GENES)
 
 
 @pytest.fixture
 def test_case3_entities(test_case3_row):
-    return process_row(test_case3_row, VAR_RECORDS, MAP_TO_MONDO)
+    return process_row(test_case3_row, VAR_RECORDS, MAP_TO_MONDO, VARIANT_GENES)
 
 
 @pytest.fixture
 def test_case4_entities(test_case4_row):
-    return process_row(test_case4_row, VAR_RECORDS, MAP_TO_MONDO)
+    return process_row(test_case4_row, VAR_RECORDS, MAP_TO_MONDO, VARIANT_GENES)
 
 
 @pytest.fixture
 def test_case5_entities(test_case5_row):
-    return process_row(test_case5_row, VAR_RECORDS, MAP_TO_MONDO)
+    return process_row(test_case5_row, VAR_RECORDS, MAP_TO_MONDO, VARIANT_GENES)
 
 
 @pytest.fixture
 def test_case6_entities(test_case6_row):
-    return process_row(test_case6_row, VAR_RECORDS, MAP_TO_MONDO)
+    return process_row(test_case6_row, VAR_RECORDS, MAP_TO_MONDO, VARIANT_GENES)
 
 
 @pytest.fixture
 def test_case7_entities(test_case7_row):
-    return process_row(test_case7_row, VAR_RECORDS, MAP_TO_MONDO)
+    return process_row(test_case7_row, VAR_RECORDS, MAP_TO_MONDO, VARIANT_GENES)
 
 
 @pytest.fixture
 def test_case8_entities(test_case8_row):
-    return process_row(test_case8_row, VAR_RECORDS, MAP_TO_MONDO)
+    return process_row(test_case8_row, VAR_RECORDS, MAP_TO_MONDO, VARIANT_GENES)
 
 
 @pytest.fixture
 def test_case9_entities(test_case9_row):
-    return process_row(test_case9_row, VAR_RECORDS, MAP_TO_MONDO)
+    return process_row(test_case9_row, VAR_RECORDS, MAP_TO_MONDO, VARIANT_GENES)
 
 
 @pytest.fixture
 def test_case10_entities(test_case10_row):
-    return process_row(test_case10_row, VAR_RECORDS, MAP_TO_MONDO)
+    return process_row(test_case10_row, VAR_RECORDS, MAP_TO_MONDO, VARIANT_GENES)
 
 
 ########################
@@ -763,10 +782,15 @@ def test_case5(test_case5_entities):
     assert len([a for a in test_case5_entities if isinstance(a, VariantToPhenotypicFeatureAssociation)]) == 2
 
 
-def test_case6(test_case6_entities):
-    assert len(test_case6_entities) == 9  # SequenceVariant, VariantToGene x2, VariantToDisease, VariantToPhenotype x5
-    assert test_case6_entities[3].object == "MONDO:0019118"
-    assert len([a for a in test_case6_entities if isinstance(a, VariantToGeneAssociation)]) == 2
+def test_case6_only_the_asserted_gene(test_case6_entities):
+    """GENEINFO for this row is "USH2A:7399|USH2A-AS2:102723833", but ClinVar attributes
+    the variant to USH2A alone. The antisense transcript must not gain a gene association
+    (and so must not inherit USH2A's diseases)."""
+    assert len(test_case6_entities) == 8  # SequenceVariant, VariantToGene, VariantToDisease, VariantToPhenotype x5
+    gene_assocs = [a for a in test_case6_entities if isinstance(a, VariantToGeneAssociation)]
+    assert len(gene_assocs) == 1
+    assert gene_assocs[0].object == "NCBIGene:7399"
+    assert test_case6_entities[2].object == "MONDO:0019118"
     assert len([a for a in test_case6_entities if isinstance(a, VariantToPhenotypicFeatureAssociation)]) == 5
 
 
@@ -788,6 +812,19 @@ def test_case8_rescued_by_concordant_submitters(test_case8_entities):
 def test_case9_not_rescued_single_low_star_submitter(test_case9_entities):
     """A single 1-star submitter alone (no concordant corroboration) must NOT be rescued."""
     assert test_case9_entities == []
+
+
+def test_unasserted_gene_yields_no_gene_association(test_case1_row):
+    """When ClinVar declines to attribute a variant to a gene (GeneID == -1, so the
+    variant is absent from variant_genes), no VariantToGeneAssociation is emitted and
+    there is deliberately NO fallback to GENEINFO -- but the variant's disease edges
+    still stand."""
+    entities = process_row(test_case1_row, VAR_RECORDS, MAP_TO_MONDO, {})
+    assert [a for a in entities if isinstance(a, VariantToGeneAssociation)] == []
+    assert entities[0].has_gene == []
+    diseases = [a for a in entities if isinstance(a, VariantToDiseaseAssociation)]
+    assert len(diseases) == 1
+    assert diseases[0].object == "MONDO:0100283"
 
 
 def test_case10_not_rescued_differing_classifications(test_case10_entities):
