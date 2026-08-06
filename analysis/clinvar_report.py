@@ -87,10 +87,14 @@ Section numbers below match the rendered report's headings (1 Purpose,
    submission_summary.txt, Start/Stop coordinate ranges instead of a fixed
    REF/ALT). This section downloads that file (~440MB, auto-fetched on first
    run) and reports real counts, size distributions, and disease-linkage
-   rates for those SV/CNV types -- including the finding that only ~6-10%
-   of copy-number gain/loss entries resolve to a MONDO/MedGen/OMIM disease
-   id at all (the rest are ClinGen-style dosage-sensitivity regions with no
-   single named condition), and that GeneSymbol degrades to unparseable
+   rates for those SV/CNV types. Note the build split matters enormously
+   here: of ~49.8k distinct CNV variants only ~14.4k have a GRCh38 row (and
+   just 8% of those resolve to a disease id -- they are largely ClinGen-style
+   dosage-sensitivity regions with no single named condition), while the
+   ~35.4k that ClinVar has only ever placed on GRCh37 are ~70% resolved.
+   Filtering to GRCh38 alone would therefore discard most of ClinVar's
+   curated CNV-disease evidence; see ASSEMBLY_PREFERENCE. Also that
+   GeneSymbol degrades to unparseable
    prose ("covers 42 genes, none of which curated...") for large CNVs,
    unlike the clean delimited gene lists small variants get.
 
@@ -117,6 +121,7 @@ from pathlib import Path
 import requests
 
 from clinvar_helpers import (
+    ASSEMBLY_PREFERENCE,
     format_id_to_map,
     make_genes_from_row,
     make_variant_gene_map,
@@ -2237,19 +2242,39 @@ def compare_gene_attribution(clinvar_tsv: Path, data_dir: Path) -> dict:
     vs_sym_text: dict = {}
     vs_field: Counter = Counter()
     vcf_field: Counter = Counter()
+    # one row per variant per build -- keep only the most-preferred build present for each
+    # VariationID, so nothing is counted twice and GRCh37-only variants are not dropped
+    vs_rank = {name: i for i, name in enumerate(ASSEMBLY_PREFERENCE)}
+    vs_best: dict = {}
     with gzip.open(data_dir / "variant_summary.txt.gz", "rt") as fh:
         for row in csv.DictReader(fh, delimiter="\t"):
-            if row["Assembly"] != "GRCh38":
+            rank = vs_rank.get(row["Assembly"])
+            if rank is None:
                 continue
             vid = row["VariationID"]
+            seen = vs_best.get(vid)
+            if seen is not None and seen <= rank:
+                continue
+            if seen is not None:
+                # a better build supersedes what a lower-preference row contributed
+                vs_symbols.pop(vid, None)
+                vs_sym_text.pop(vid, None)
+            vs_best[vid] = rank
             vs_symbols.setdefault(vid, set()).add(row["GeneID"])
             vs_sym_text.setdefault(vid, set()).add(row["GeneSymbol"])
-            vs_field["rows_grch38"] += 1
-            if row["GeneID"] == "-1":
-                vs_field["geneid_minus1"] += 1
-            # large CNVs degrade GeneSymbol to prose ("covers 42 genes, none of which...")
-            if " " in row["GeneSymbol"] or len(row["GeneSymbol"]) > 40:
-                vs_field["symbol_prose"] += 1
+
+
+    # All four counted from the final per-variant selection rather than incrementally:
+    # a variant present on both builds passes the rank test twice on its way to GRCh38,
+    # so incrementing inside the loop double-counts it.
+    vs_field["rows_kept"] = len(vs_best)
+    for vid, rank in vs_best.items():
+        vs_field[f"build_{ASSEMBLY_PREFERENCE[rank]}"] += 1
+        if vs_symbols.get(vid) == {"-1"}:
+            vs_field["geneid_minus1"] += 1
+        # large CNVs degrade GeneSymbol to prose ("covers 42 genes, none of which...")
+        if any(" " in sym or len(sym) > 40 for sym in vs_sym_text.get(vid, ())):
+            vs_field["symbol_prose"] += 1
 
     stats = {
         "geneinfo_attributions": 0,
@@ -2553,7 +2578,7 @@ def ensure_variant_summary_downloaded(data_dir: Path) -> Path:
 
 
 def build_sv_summary(data_dir: Path, map_to_mondo: dict) -> dict:
-    """Full pass over variant_summary.txt.gz (GRCh38 rows only) tallying the Type
+    """Two passes over variant_summary.txt.gz tallying the Type
     distribution and, for the SV_TYPES specifically: count, how many resolve to a
     disease id (PhenotypeIDS not '-'/empty) vs not, genomic span (Stop - Start), and
     every row (resolved AND unresolved, any ClinicalSignificance) for the full
@@ -2567,6 +2592,12 @@ def build_sv_summary(data_dir: Path, map_to_mondo: dict) -> dict:
     disease(s) -- used to find pairs whose only ClinVar evidence is structural,
     invisible to production's SNV/indel-only pipeline (clinvar.vcf.gz has no
     way to represent a CNV/inversion at all).
+
+    The file carries one row per variant per genome build. The first pass records
+    which build should represent each VariationID (ASSEMBLY_PREFERENCE: GRCh38,
+    else GRCh37) and the second tallies exactly one row per variant, so a variant
+    present on both builds is never counted twice and one ClinVar has only placed
+    on GRCh37 is not silently dropped.
     """
     path = ensure_variant_summary_downloaded(data_dir)
 
@@ -2578,10 +2609,40 @@ def build_sv_summary(data_dir: Path, map_to_mondo: dict) -> dict:
     with gzip.open(path, "rt") as fh:
         header = fh.readline().rstrip("\n").lstrip("#").split("\t")
         hcols = {k: i for i, k in enumerate(header)}
+        # First pass: which build should represent each variant. Buffering the rows
+        # themselves would mean holding millions of split lines in memory, so this
+        # re-reads the file instead and keeps only a rank per VariationID.
+        sv_rank = {name: i for i, name in enumerate(ASSEMBLY_PREFERENCE)}
+        sv_best: dict = {}
+        sv_unplaced: set = set()
         for line in fh:
             cols = line.rstrip("\n").split("\t")
-            if cols[hcols["Assembly"]] != "GRCh38":
+            varid = cols[hcols["VariationID"]]
+            rank = sv_rank.get(cols[hcols["Assembly"]])
+            if rank is None:
+                # NCBI36 / "na" -- unusable. Track SV-typed ones so the count of variants
+                # this section cannot place is reported rather than silently dropped.
+                if cols[hcols["Type"]] in SV_TYPES:
+                    sv_unplaced.add(varid)
                 continue
+            seen = sv_best.get(varid)
+            if seen is None or rank < seen:
+                sv_best[varid] = rank
+
+    sv_unplaced -= set(sv_best)
+    sv_build_stats: dict = {name: {"count": 0, "resolved": 0} for name in ASSEMBLY_PREFERENCE}
+
+    sv_done: set = set()
+    with gzip.open(path, "rt") as fh:
+        fh.readline()
+        for line in fh:
+            cols = line.rstrip("\n").split("\t")
+            rank = sv_rank.get(cols[hcols["Assembly"]])
+            varid = cols[hcols["VariationID"]]
+            # exactly one row per variant: the preferred build, first occurrence only
+            if rank is None or rank != sv_best.get(varid) or varid in sv_done:
+                continue
+            sv_done.add(varid)
 
             vtype = cols[hcols["Type"]]
             type_counts[vtype] += 1
@@ -2594,6 +2655,11 @@ def build_sv_summary(data_dir: Path, map_to_mondo: dict) -> dict:
             resolved = pheno_ids not in ("-", "")
             if resolved:
                 stat["resolved"] += 1
+            build = cols[hcols["Assembly"]]
+            if build in sv_build_stats:
+                sv_build_stats[build]["count"] += 1
+                if resolved:
+                    sv_build_stats[build]["resolved"] += 1
 
             try:
                 span = int(cols[hcols["Stop"]]) - int(cols[hcols["Start"]])
@@ -2655,6 +2721,8 @@ def build_sv_summary(data_dir: Path, map_to_mondo: dict) -> dict:
         "sv_rows": sv_rows,
         "total_variants": sum(type_counts.values()),
         "gene_disease_pairs": gene_disease_pairs,
+        "build_stats": sv_build_stats,
+        "unplaced": len(sv_unplaced),
     }
 
 
@@ -2880,6 +2948,8 @@ def render_html(
     )
     clingen_only_json = json.dumps(clingen_only_rows)
 
+    sv_b38 = sv_summary["build_stats"]["GRCh38"]
+    sv_b37 = sv_summary["build_stats"]["GRCh37"]
     sv_gene_disease_pairs_count = len(sv_summary["gene_disease_pairs"])
     sv_only_pairs_count = len(sv_only_pairs)
     sv_only_pct = 100 * sv_only_pairs_count / sv_gene_disease_pairs_count if sv_gene_disease_pairs_count else 0
@@ -2955,7 +3025,7 @@ def render_html(
 <tr>
   <td><code>variant_summary.txt.gz</code></td>
   <td>one variant &times; genome build</td>
-  <td class="num">{vs_f['rows_grch38']:,} <span style="color:#64748b;">(GRCh38)</span></td>
+  <td class="num">{vs_f['rows_kept']:,} <span style="color:#64748b;">(deduped)</span></td>
   <td>ClinVar's curated per-variant <strong>gene attribution</strong>, and the structural variants absent from the VCF (section 9)</td>
 </tr>
 <tr>
@@ -3087,7 +3157,7 @@ def render_html(
 <tbody>
 <tr class="prod"><td><code>GeneID</code> / <code>GeneSymbol</code></td><td><strong>The gene ClinVar actually attributes the variant to</strong> &mdash; now the sole source of variant-gene edges (<code>make_variant_gene_map()</code>)</td></tr>
 <tr><td><code>HGNC_ID</code></td><td>Not yet used. Worth noting: this is the id space the Monarch KG keys genes on, so emitting it would remove the HGNC&harr;Entrez crosswalk section 6 has to build</td></tr>
-<tr><td><code>Assembly</code></td><td>Filter to GRCh38</td></tr>
+<tr><td><code>Assembly</code></td><td>Build selection &mdash; GRCh38 preferred, GRCh37 only where no GRCh38 row exists, never both</td></tr>
 <tr><td><code>Type</code>, <code>Start</code>, <code>Stop</code></td><td>Structural-variant analysis in section 9</td></tr>
 <tr><td><code>Name</code></td><td>Transcript-anchored HGVS, e.g. <code>NM_000492.3(CFTR):c.1521_1523del</code>. Independent confirmation of the attributed gene</td></tr>
 <tr><td><code>NumberSubmitters</code></td><td>Not used &mdash; this report counts distinct submitters from <code>submission_summary</code> instead, since it needs them per (gene, disease) rather than per variant</td></tr>
@@ -3096,7 +3166,7 @@ def render_html(
 </div>
 <div class="summary-box">
   <strong>Known rough edges in this file.</strong>
-  <code>GeneID = -1</code> on {vs_f['geneid_minus1']:,} GRCh38 rows means ClinVar declines to attribute a
+  <code>GeneID = -1</code> on {vs_f['geneid_minus1']:,} of the selected rows means ClinVar declines to attribute a
   gene; the ingest emits no gene edge for those and deliberately does <strong>not</strong> fall back to
   <code>GENEINFO</code> ({ga['vs_minus1']:,} of them are variants present in the VCF).
   <code>GeneSymbol</code> degrades to unparseable prose on {vs_f['symbol_prose']:,} rows &mdash; large
@@ -4468,12 +4538,22 @@ def render_html(
 
 <h3>All SV/CNV variants ({len(sv_summary["sv_rows"]):,} rows)</h3>
 <p class="subtitle">
-  Every GRCh38 row across copy number gain/loss, Translocation, and Complex, any
-  ClinicalSignificance. Only ~6-10% of copy-number gain/loss rows resolve to a disease id at all
-  (see the table above) -- uncheck "SV resolved to disease" to see the unresolved majority, whose
-  <code>PhenotypeList</code> is the literal ClinVar placeholder <code>"See cases"</code>. Note the
-  gene list this ingest already builds (<code>make_genes_from_row()</code>, splitting
-  <code>GENEINFO</code> on <code>|</code>) has no equivalent here &mdash;
+  One row per variant across copy number gain/loss, Translocation, and Complex, any
+  ClinicalSignificance &mdash; GRCh38 where ClinVar provides it, GRCh37 otherwise, never both.
+  <strong>That build choice dominates this section.</strong> Of the
+  {sv_b38['count'] + sv_b37['count']:,} SV/CNV variants placed on a usable build,
+  <strong>{sv_b38['count']:,} are represented by a GRCh38 row and only
+  {100 * sv_b38['resolved'] / max(sv_b38['count'], 1):.0f}% of those resolve to a disease id</strong>
+  &mdash; they are mostly ClinGen-style dosage-sensitivity regions with no single named condition,
+  whose <code>PhenotypeList</code> is the literal placeholder <code>"See cases"</code>. The
+  <strong>{sv_b37['count']:,} that ClinVar has only ever placed on GRCh37 are
+  {100 * sv_b37['resolved'] / max(sv_b37['count'], 1):.0f}% resolved.</strong>
+  ({sv_summary['unplaced']:,} more are on NCBI36 or no build at all and cannot be placed here.)
+  An earlier version of this report
+  filtered to GRCh38 and consequently reported a ~6&ndash;10% resolution rate as though it were a
+  property of ClinVar's CNV curation; it was an artifact of dropping the older, better-curated
+  build. Uncheck "SV resolved to disease" to browse the unresolved subset. Note the
+  per-variant gene attribution used elsewhere in this report has no equivalent here &mdash;
   <code>variant_summary.txt</code>'s own <code>GeneSymbol</code> column degrades to unparseable
   prose for large CNVs (e.g. <em>"covers 42 genes, none of which curated to show dosage
   sensitivity"</em>), so pulling an actual gene list for these would require a separate

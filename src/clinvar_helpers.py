@@ -128,7 +128,15 @@ def make_medgen_to_mondo_map(medgen_path):
     return map_to_mondo
 
 
-def make_variant_gene_map(variant_summary_path, assembly="GRCh38"):
+# variant_summary.txt.gz carries one row per variant per genome build, so a variant
+# typically appears on both GRCh37 and GRCh38. Take the most-preferred build present for
+# each VariationID and never more than one -- filtering to GRCh38 alone would silently
+# drop variants ClinVar has only ever placed on GRCh37, while taking every row would
+# count the same variant twice.
+ASSEMBLY_PREFERENCE = ("GRCh38", "GRCh37")
+
+
+def make_variant_gene_map(variant_summary_path, assembly_preference=ASSEMBLY_PREFERENCE):
     """ClinVar's own per-variant gene attribution, from variant_summary.txt.gz.
 
     The VCF's GENEINFO field is populated *positionally* -- it lists every gene
@@ -148,10 +156,14 @@ def make_variant_gene_map(variant_summary_path, assembly="GRCh38"):
     GeneID == -1 means ClinVar declines to attribute the variant to a gene
     (4,109 variants, 0.09%). Those are omitted here and deliberately get NO
     fallback to GENEINFO -- an unasserted gene is left unasserted, and the
-    variant still contributes its disease and phenotype edges.
+    variant still contributes its disease and phenotype edges. The same applies
+    across builds: if the preferred build's row says -1, that is ClinVar's
+    answer and a lower-preference build is not consulted to override it.
     """
     gene_map = {}
+    best_rank = {}
     symbol_pool = {}
+    rank_of = {name: i for i, name in enumerate(assembly_preference)}
     hcols = None
     with gzip.open(variant_summary_path, "rt") as infile:
         for line in infile:
@@ -164,16 +176,25 @@ def make_variant_gene_map(variant_summary_path, assembly="GRCh38"):
                 hcols = {k: i for i, k in enumerate(header)}
                 continue
             cols = line.split("\t")
-            if cols[hcols["Assembly"]] != assembly:
+            rank = rank_of.get(cols[hcols["Assembly"]])
+            if rank is None:
                 continue
+            varid = cols[hcols["VariationID"]]
+            seen = best_rank.get(varid)
+            if seen is not None and seen <= rank:
+                continue
+            best_rank[varid] = rank
             gene_id = cols[hcols["GeneID"]]
             if gene_id == "-1" or not gene_id:
+                # the preferred build declines to attribute a gene -- drop any attribution
+                # picked up from a lower-preference build rather than letting it stand
+                gene_map.pop(varid, None)
                 continue
             symbol = cols[hcols["GeneSymbol"]]
             # gene symbols repeat across millions of rows -- intern them so the map
             # holds one string per gene rather than one per variant
             symbol = symbol_pool.setdefault(symbol, symbol)
-            gene_map[cols[hcols["VariationID"]]] = ("NCBIGene:{}".format(gene_id), symbol)
+            gene_map[varid] = ("NCBIGene:{}".format(gene_id), symbol)
     return gene_map
 
 
