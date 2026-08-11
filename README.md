@@ -4,30 +4,45 @@ ClinVar aggregates information about genomic variation and its relationship to h
 
 ## Ingest files and how nodes and edges are generated
 
-Two files downloaded from ClinVar are leveraged in this ingest:
+Three files downloaded from ClinVar are leveraged in this ingest:
 
-- **clinvar.vcf** — Contains a single line per ClinVar variant with each variant's associated terms reported in the INFO column and grouped by which submission record(s) they originated from. https://ftp.ncbi.nlm.nih.gov/pub/clinvar/vcf_GRCh38 (hg38 genome version)
-- **submission_summary.txt** — Contains a single line per variant record. These records contain in-depth information about the variant in question that we can leverage in the ingest process. Multiple records often exist per one variant. https://ftp.ncbi.nlm.nih.gov/pub/clinvar/tab_delimited/
+- **clinvar.vcf** — A single line per ClinVar variant, with the variant's associated terms in the INFO column, grouped by which submission record(s) they originated from. Defines which variants the ingest considers at all. https://ftp.ncbi.nlm.nih.gov/pub/clinvar/vcf_GRCh38 (hg38)
+- **submission_summary.txt** — A single line per submission record: one lab's assertion about one variant. Multiple records usually exist per variant. This is the evidence the inclusion filter runs over. https://ftp.ncbi.nlm.nih.gov/pub/clinvar/tab_delimited/
+- **variant_summary.txt** — A single line per variant per genome build, carrying ClinVar's own curated `GeneID`/`GeneSymbol`/`HGNC_ID` for the variant. Used for gene attribution; see the Variant to Gene section below for why the VCF's `GENEINFO` is not. https://ftp.ncbi.nlm.nih.gov/pub/clinvar/tab_delimited/
+
+See [FILTERING.md](FILTERING.md) for the full stage-by-stage filtering pipeline.
 
 ### Variant nodes (SequenceVariant)
 
-SequenceVariant nodes are created from ClinVar variants that are deemed Pathogenic or Likely Pathogenic. A submission record is accepted as evidence if it either (a) has a ClinVar review status of 3 or more stars (4 maximum), or (b) is corroborated by at least 2 independent submitters agreeing on the same disease and the same classification, regardless of each individual submitter's own review status. This two-path rule recovers gene-disease associations that ClinVar's per-submission review-status field can never mark above 1 star on its own — its "2 stars, multiple submitters, no conflicts" tier is an aggregate ClinVar computes *across* a variant's submitters and only appears in ClinVar's variant-level files (e.g. the VCF's CLNREVSTAT), never on an individual submission record — while still requiring independent corroboration rather than accepting any single low-confidence submission.
+SequenceVariant nodes are created from ClinVar variants deemed Pathogenic or Likely Pathogenic. A (variant, disease) is accepted if **any** of three paths holds:
+
+1. **Per-record review status** — some submission record reaches 3 or more stars (4 maximum), i.e. reviewed by expert panel or practice guideline.
+2. **Multi-submitter concordance** — at least 2 independent submitters agree on the same disease with the same classification, regardless of each submitter's own review status.
+3. **ClinVar's aggregate review status** — the variant's `CLNREVSTAT` in the VCF reaches 2 or more stars ("criteria provided, multiple submitters, no conflicts").
+
+Path 3 exists because the 2-star tier is a statement about agreement *between* records, so no individual submission record can carry it; paths 1 and 2 structurally cannot see it. In the current release path 3 accounts for the large majority of accepted variants.
+
+The `type` slot on the node carries the variant **class** (SNV, deletion, duplication — from `CLNVCSO`), not the molecular consequence (missense, frameshift), which is a property of variant × transcript rather than of the variant.
 
 ### Variant to Disease edges (VariantToDiseaseAssociation)
 
 Disease IDs are derived from the ReportedPhenotypeInfo column within the submission_summary.txt file. This column consists of MedGen IDs that we then map to a Mondo ID. Alternatively, if a Mondo ID cannot be found, then the SubmittedPhenotypeInfo column will be used instead. If neither column maps to a Mondo ID then no edge will be made.
 
-Predicates are derived from the ClinicalSignificance column within the submission_summary.txt file. Currently only Pathogenic and Likely pathogenic are included as "causes" and "associated_with_increased_likelihood_of" respectively. A gene-disease pair is included if it meets the review-status or multi-submitter concordance rule described above.
+Predicates are derived from the ClinicalSignificance column within the submission_summary.txt file. Pathogenic, Pathogenic/Likely pathogenic and Likely pathogenic (including the low-penetrance variants of each) all map to **"causes"** — "Likely pathogenic" expresses the curator's confidence in a causal claim rather than a weaker kind of relationship. Exactly one predicate is emitted per (variant, disease); every submitted classification is preserved in `original_predicate`. A gene-disease pair is included if it meets the review-status or multi-submitter concordance rule described above.
 
-### Variant to Phenotype edges (VariantToPhenotypicFeatureAssociation)
+### Variant to Phenotype edges — not emitted
 
-These edges are only created if a Variant to Disease edge can be made. The phenotype terms themselves are derived from the INFO column of the clinvar.vcf file. The information within this column is reported as groups of terms that map back to an individual record(s) from the submission_summary.txt file. Any group of terms that contains the disease ID from the Variant to Disease edge will have Variant to Phenotype edges created for all reported Human Phenotype Ontology terms reported within the group.
+This ingest does **not** produce `VariantToPhenotypicFeatureAssociation` edges.
 
-The predicate for these edges is "contributes_to".
+ClinVar's HPO ids appear only inside `CLNDISDB` groups, alongside the MONDO/MedGen/OMIM/Orphanet ids for the *same* condition — they are cross-references naming that condition in HPO's vocabulary, not observed phenotypes. They are supplied by MedGen's cross-reference table rather than by submitters (12 of 6.37M submission records carry an HPO id directly). Measured across 585 diseases with 2 or more HPO-bearing variants, mean consistency is 0.9994 and 584 of 585 show *zero* variation between variants — the term set is a property of the disease, not the variant. A `contributes_to` edge built from them restated the disease edge in a second vocabulary rather than asserting a distinct phenotype.
 
 ### Variant to Gene edges (VariantToGeneAssociation)
 
-These edges are created only if a Variant to Disease edge can be made. Gene symbols are derived from the INFO column within the clinvar.vcf file and gene symbols are mapped to NCBI genes.
+These edges are created only if a Variant to Disease edge can be made. The gene comes from **ClinVar's own curated attribution** in variant_summary.txt (`GeneID`), not from the VCF's `GENEINFO` field.
 
-The predicate "is_sequence_variant_of" is used. Sequence Ontology terms are also reported within the INFO column pertaining to the variant's "molecular consequence" (MC subfield within INFO). These terms are recorded in the "type" slot for the SequenceVariant node that is created.
+`GENEINFO` is populated *positionally* — it lists every locus whose span covers the variant, which is what the field is documented to do. Building gene edges from it gave antisense transcripts, readthrough fusions and NCBI `LOC` placeholders their own edges, from which they inherited the causal gene's diseases and submitters (`CFTR-AS1` appeared as a cystic fibrosis gene with 76 submitters behind it). Switching to the curated attribution removed 6,570 such edges while leaving disease edge counts untouched.
+
+Where ClinVar declines to attribute a gene (`GeneID == -1`) no gene edge is emitted and there is deliberately no `GENEINFO` fallback; the variant keeps its disease edges.
+
+The predicate "is_sequence_variant_of" is used.
 

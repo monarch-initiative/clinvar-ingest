@@ -9,7 +9,6 @@ import pytest
 from biolink_model.datamodel.pydanticmodel_v2 import (
     VariantToDiseaseAssociation,
     VariantToGeneAssociation,
-    VariantToPhenotypicFeatureAssociation,
 )
 from koza.runner import KozaTransform, PassthroughWriter
 
@@ -189,6 +188,18 @@ VARIANT_GENES = {
     "9000002": ("NCBIGene:4653", "MYOC"),
     "9000003": ("NCBIGene:4653", "MYOC"),
     # 9000004 deliberately absent: ClinVar GeneID == -1, i.e. no asserted gene
+}
+
+
+# Minimal VCF row shared by tests that construct their own cases. Mirrors the MYOC /
+# MONDO:0020367 wiring used by the rescue fixtures.
+_TEST_ROW_TEMPLATE = {
+    "CHROM": "1", "POS": "171636092", "ID": "0", "REF": "T", "ALT": "A",
+    "CLNDISDB": "Human_Phenotype_Ontology:HP:0001087,MONDO:MONDO:0020367,MedGen:C2981140,Orphanet:98977",
+    "CLNHGVS": "NC_000001.11:g.171636092T>A",
+    "CLNREVSTAT": "criteria_provided,_single_submitter",
+    "CLNVC": "single_nucleotide_variant", "CLNVCSO": "SO:0001483",
+    "GENEINFO": "MYOC:4653", "MC": "SO:0001583|missense_variant", "RS": ".",
 }
 
 
@@ -762,12 +773,11 @@ def test_case1(test_case1_entities):
 
 
 def test_case2(test_case2_entities):
-    assert len(test_case2_entities) == 4  # SequenceVariant, VariantToGene, VariantToDisease, VariantToPhenotype
+    assert len(test_case2_entities) == 3  # SequenceVariant, VariantToGene, VariantToDisease
 
 
 def test_case3(test_case3_entities):
-    assert len(test_case3_entities) == 5  # SequenceVariant, VariantToGene, VariantToDisease, VariantToPhenotype x2
-    assert len([a for a in test_case3_entities if isinstance(a, VariantToPhenotypicFeatureAssociation)]) == 2
+    assert len(test_case3_entities) == 3  # SequenceVariant, VariantToGene, VariantToDisease
     assert test_case3_entities[2].object == "MONDO:0015924"
 
 
@@ -777,33 +787,35 @@ def test_case4(test_case4_entities):
 
 
 def test_case5(test_case5_entities):
-    assert len(test_case5_entities) == 5  # SequenceVariant, VariantToGene, VariantToDisease, VariantToPhenotype x2
+    assert len(test_case5_entities) == 3  # SequenceVariant, VariantToGene, VariantToDisease
     assert test_case5_entities[2].object == "MONDO:0015924"
-    assert len([a for a in test_case5_entities if isinstance(a, VariantToPhenotypicFeatureAssociation)]) == 2
 
 
 def test_case6_only_the_asserted_gene(test_case6_entities):
     """GENEINFO for this row is "USH2A:7399|USH2A-AS2:102723833", but ClinVar attributes
     the variant to USH2A alone. The antisense transcript must not gain a gene association
     (and so must not inherit USH2A's diseases)."""
-    assert len(test_case6_entities) == 8  # SequenceVariant, VariantToGene, VariantToDisease, VariantToPhenotype x5
+    assert len(test_case6_entities) == 3  # SequenceVariant, VariantToGene, VariantToDisease
     gene_assocs = [a for a in test_case6_entities if isinstance(a, VariantToGeneAssociation)]
     assert len(gene_assocs) == 1
     assert gene_assocs[0].object == "NCBIGene:7399"
     assert test_case6_entities[2].object == "MONDO:0019118"
-    assert len([a for a in test_case6_entities if isinstance(a, VariantToPhenotypicFeatureAssociation)]) == 5
 
 
-def test_case7(test_case7_entities):
-    assert len(test_case7_entities) == 4  # SequenceVariant, VariantToGene, VariantToDisease, VariantToPhenotype
+def test_case7_type_is_variant_class_not_consequence(test_case7_entities):
+    """SequenceVariant.type carries the variant CLASS from CLNVCSO, not the molecular
+    consequence from MC. This row's MC lists SO:0001583 (missense) and SO:0001627
+    (intron) -- neither belongs in `type`; the variant is a single nucleotide variant,
+    SO:0001483. Consequence is a property of variant x transcript, not of the variant."""
+    assert len(test_case7_entities) == 3  # SequenceVariant, VariantToGene, VariantToDisease
     assert test_case7_entities[2].object == "MONDO:0013144"
-    assert test_case7_entities[0].type == ["SO:0001583", "SO:0001627"]
+    assert test_case7_entities[0].type == ["SO:0001483"]
 
 
 def test_case8_rescued_by_concordant_submitters(test_case8_entities):
     """Two 1-star submitters independently agreeing on the same disease and the
     same classification should be rescued despite neither reaching star_min=3."""
-    assert len(test_case8_entities) == 4  # SequenceVariant, VariantToGene, VariantToDisease, VariantToPhenotype
+    assert len(test_case8_entities) == 3  # SequenceVariant, VariantToGene, VariantToDisease
     diseases = [e for e in test_case8_entities if isinstance(e, VariantToDiseaseAssociation)]
     assert len(diseases) == 1
     assert diseases[0].object == "MONDO:0020367"
@@ -812,6 +824,16 @@ def test_case8_rescued_by_concordant_submitters(test_case8_entities):
 def test_case9_not_rescued_single_low_star_submitter(test_case9_entities):
     """A single 1-star submitter alone (no concordant corroboration) must NOT be rescued."""
     assert test_case9_entities == []
+
+
+def test_no_dbsnp_xref_when_rs_absent(test_case2_row, test_case1_row):
+    """RS is "." on variants ClinVar has not mapped to dbSNP; emitting "DBSNP:." would be
+    a junk CURIE, so xref is left empty instead."""
+    no_rs = process_row(test_case2_row, VAR_RECORDS, MAP_TO_MONDO, VARIANT_GENES)
+    assert test_case2_row["RS"] == "."
+    assert no_rs[0].xref == []
+    with_rs = process_row(test_case1_row, VAR_RECORDS, MAP_TO_MONDO, VARIANT_GENES)
+    assert with_rs[0].xref == ["DBSNP:587777893"]
 
 
 def test_unasserted_gene_yields_no_gene_association(test_case1_row):
@@ -831,3 +853,52 @@ def test_case10_not_rescued_differing_classifications(test_case10_entities):
     """Two 1-star submitters on the same disease but different classifications must
     NOT be rescued -- concordance requires the exact same ClinicalSignificance."""
     assert test_case10_entities == []
+
+
+def test_no_phenotype_edges_are_emitted(test_case3_entities, test_case6_entities):
+    """ClinVar's HPO ids are cross-references naming the same condition as the disease id
+    in the same CLNDISDB group -- not observed phenotypes. Emitting
+    VariantToPhenotypicFeatureAssociation from them restated the disease edge in a second
+    vocabulary, so no phenotype edges are produced. Case 6's row carries five such HPO
+    terms and must still yield only variant, gene and disease entities."""
+    for entities in (test_case3_entities, test_case6_entities):
+        assert [type(e).__name__ for e in entities] == [
+            "SequenceVariant",
+            "VariantToGeneAssociation",
+            "VariantToDiseaseAssociation",
+        ]
+
+
+def test_one_predicate_per_variant_disease():
+    """A variant often carries both Pathogenic and Likely-pathogenic records for the same
+    disease. Emitting an edge per predicate asserted both `causes` and
+    `associated_with_increased_likelihood_of` for the same (variant, disease), which is
+    contradictory. Only the strongest is emitted; the submitted classifications remain
+    visible in original_predicate."""
+    row = {**_TEST_ROW_TEMPLATE, "ID": "9000005"}
+    records = [
+        _make_record("Pathogenic", "C2981140", "Glaucoma_of_childhood"),
+        _make_record("Likely pathogenic", "C2981140", "Glaucoma_of_childhood"),
+    ]
+    entities = process_row(
+        row, {"9000005": records}, MAP_TO_MONDO, {"9000005": ("NCBIGene:4653", "MYOC")}
+    )
+    disease_edges = [e for e in entities if isinstance(e, VariantToDiseaseAssociation)]
+    assert len(disease_edges) == 1
+    assert disease_edges[0].predicate == "biolink:causes"
+    assert disease_edges[0].original_predicate == "Likely pathogenic:Pathogenic"
+
+
+def test_likely_pathogenic_also_causes():
+    """Likely pathogenic expresses the curator's confidence in a causal claim, not a
+    weaker kind of relationship, so it maps to `causes` alongside Pathogenic and
+    Pathogenic/Likely pathogenic. associated_with_increased_likelihood_of is not emitted."""
+    row = {**_TEST_ROW_TEMPLATE, "ID": "9000006"}
+    records = [_make_record("Likely pathogenic", "C2981140", "Glaucoma_of_childhood")]
+    entities = process_row(
+        row, {"9000006": records}, MAP_TO_MONDO, {"9000006": ("NCBIGene:4653", "MYOC")}
+    )
+    disease_edges = [e for e in entities if isinstance(e, VariantToDiseaseAssociation)]
+    assert len(disease_edges) == 1
+    assert disease_edges[0].predicate == "biolink:causes"
+    assert disease_edges[0].original_predicate == "Likely pathogenic"

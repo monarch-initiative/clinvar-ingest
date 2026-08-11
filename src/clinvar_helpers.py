@@ -7,7 +7,6 @@ from biolink_model.datamodel.pydanticmodel_v2 import (
     SequenceVariant,
     VariantToDiseaseAssociation,
     VariantToGeneAssociation,
-    VariantToPhenotypicFeatureAssociation,
 )
 
 # Variant to gene predicate
@@ -17,10 +16,7 @@ IS_SEQUENCE_VARIANT_OF = "biolink:is_sequence_variant_of"
 CAUSES = "biolink:causes"
 ASSOCIATED_WITH = "biolink:associated_with_increased_likelihood_of"
 
-# Variant to phenotype
-CONTRIBUTES_TO = "biolink:contributes_to"
-
-pred_to_negated = {CAUSES: False, ASSOCIATED_WITH: False, CONTRIBUTES_TO: False}
+pred_to_negated = {CAUSES: False, ASSOCIATED_WITH: False}
 
 # Star ratings exactly as ClinVar documents them:
 # https://www.ncbi.nlm.nih.gov/clinvar/docs/review_status/
@@ -45,13 +41,25 @@ review_star_map = {
 
 var2disease_star_min = 3
 min_concordant_submitters = 2
+# ClinVar's own variant-level aggregate review status (the VCF's CLNREVSTAT). Its 2-star
+# tier -- "criteria provided, multiple submitters, no conflicts" -- is computed ACROSS a
+# variant's submitters and never appears on an individual submission record, so the
+# per-record star filter above can never see it. Accepting it as a third inclusion path
+# uses ClinVar's own multi-submitter inference rather than re-deriving one.
+aggregate_star_min = 2
 
+# Every Pathogenic-family classification asserts causation. "Likely pathogenic" is a
+# statement about the curator's confidence in the same causal claim, not a claim of a
+# weaker relationship, so mapping it to associated_with_increased_likelihood_of
+# misrepresented it -- and let one (variant, disease) carry both predicates at once.
+# ASSOCIATED_WITH is retained for a future evidence-strength tier (see section 7 of the
+# analysis report) but is not currently emitted.
 predicate_map = {
     "Pathogenic": CAUSES,
     "Pathogenic, low penetrance": CAUSES,
     "Pathogenic/Likely pathogenic": CAUSES,
-    "Likely pathogenic": ASSOCIATED_WITH,
-    "Likely pathogenic, low penetrance": ASSOCIATED_WITH,
+    "Likely pathogenic": CAUSES,
+    "Likely pathogenic, low penetrance": CAUSES,
 }
 
 
@@ -156,7 +164,7 @@ def make_variant_gene_map(variant_summary_path, assembly_preference=ASSEMBLY_PRE
     GeneID == -1 means ClinVar declines to attribute the variant to a gene
     (4,109 variants, 0.09%). Those are omitted here and deliberately get NO
     fallback to GENEINFO -- an unasserted gene is left unasserted, and the
-    variant still contributes its disease and phenotype edges. The same applies
+    variant still contributes its disease edges. The same applies
     across builds: if the preferred build's row says -1, that is ClinVar's
     answer and a lower-preference build is not consulted to override it.
     """
@@ -261,10 +269,14 @@ def concordant_disease_pairs(record_list, map_to_mondo, min_submitters):
     return {key for key, submitters in groups.items() if len(submitters) >= min_submitters}
 
 
-def variant_records_to_disease(record_list, map_to_mondo, star_min=3, rescue_min_submitters=None):
+def variant_records_to_disease(record_list, map_to_mondo, star_min=3, rescue_min_submitters=None, aggregate_stars=0):
     concordant_pairs = (
         concordant_disease_pairs(record_list, map_to_mondo, rescue_min_submitters) if rescue_min_submitters else set()
     )
+    # ClinVar has already aggregated this variant to >=2 stars across its submitters, which
+    # is the same signal the concordance rescue reconstructs -- accept every P/LP mapping
+    # without re-testing per-record stars or exact-string agreement.
+    accept_on_aggregate = aggregate_stars >= aggregate_star_min
 
     dis = {}
     preds = {}
@@ -292,7 +304,7 @@ def variant_records_to_disease(record_list, map_to_mondo, star_min=3, rescue_min
 
             for d in mondo_ids:
                 mapped_terms += 1
-                if stars < star_min and (d, clinsig) not in concordant_pairs:
+                if not accept_on_aggregate and stars < star_min and (d, clinsig) not in concordant_pairs:
                     continue
                 dis[d] = ""
                 if d not in preds:
@@ -389,13 +401,24 @@ def process_row(row, var_records, map_to_mondo, variant_genes):
     the row's GENEINFO field -- GENEINFO lists every locus overlapping the variant's
     position, which would mint gene-disease associations for antisense transcripts and
     neighbours. A variant ClinVar declines to attribute to a gene simply produces no
-    VariantToGeneAssociation; its disease and phenotype edges are unaffected.
+    VariantToGeneAssociation; its disease edges are unaffected.
+
+    No phenotype edges are emitted. ClinVar's HPO ids live inside CLNDISDB groups
+    alongside the MONDO/MedGen/OMIM ids for the SAME condition -- they are
+    cross-references naming that condition in HPO's vocabulary, supplied by MedGen
+    rather than by the submitter, and measured at 0.9994 mean consistency across a
+    disease's variants. A VariantToPhenotypicFeatureAssociation built from them
+    restated the disease edge in a second vocabulary instead of adding phenotype
+    information, so they were removed.
     """
     entities = []
 
     varid = str(row["ID"])
     raw_diss_info = row["CLNDISDB"]
-    so_info = [v.split("|")[0] for v in row["MC"].split(",") if "SO:" in v]
+    # SequenceVariant.type carries the variant CLASS (SNV / deletion / duplication ...) from
+    # CLNVCSO, not the molecular consequence from MC (missense / frameshift ...) -- the class
+    # is a property of the variant, the consequence is a property of variant x transcript.
+    variant_class = [row["CLNVCSO"]] if row["CLNVCSO"].startswith("SO:") else []
 
     if varid not in var_records:
         return []
@@ -408,23 +431,30 @@ def process_row(row, var_records, map_to_mondo, variant_genes):
         map_to_mondo,
         star_min=var2disease_star_min,
         rescue_min_submitters=min_concordant_submitters,
+        aggregate_stars=review_star_map.get(row["CLNREVSTAT"], 0),
     )
 
+    # Corroboration check: at least one disease derived from the submission records must
+    # also appear in the VCF's own aggregate CLNDISDB list for this variant. This gate
+    # predates the removal of phenotype edges (it used to double as "are there HPO terms
+    # to emit?"), but it stands on its own as a cross-check between the two input files.
+    # All-or-nothing per variant, and very nearly inert in practice: it drops 2 of 56,270.
     diss_info = parse_CLNDISDB(raw_diss_info)
     diss_info, _ = map_CLNDISDB_to_mondo(diss_info, map_to_mondo)
-    mondo_to_hp = map_mondo_to_hp(diss_info, disease_ids)
+    corroborated = map_mondo_to_hp(diss_info, disease_ids)
 
-    if len(mondo_to_hp) == 0:
+    if len(corroborated) == 0:
         return []
 
     seq_var = SequenceVariant(
         id="CLINVAR:{}".format(row["ID"]),
         name=row["CLNHGVS"],
-        xref=["DBSNP:{}".format(row["RS"])],
+        # RS is "." on variants with no dbSNP mapping -- emitting "DBSNP:." would be a junk CURIE
+        xref=["DBSNP:{}".format(row["RS"])] if row["RS"] != "." else [],
         has_gene=gene_ids,
         in_taxon=["NCBITaxon:9606"],
         in_taxon_label="Homo sapiens",
-        type=so_info,
+        type=variant_class,
     )
     entities.append(seq_var)
 
@@ -444,7 +474,12 @@ def process_row(row, var_records, map_to_mondo, variant_genes):
 
     for dis_id, predicate in disease_predicates.items():
         og_preds = sorted(list(org_predicates[dis_id].keys()))
-        for pred in list(predicate.keys()):
+        # A variant often carries both Pathogenic and Likely-pathogenic records for the
+        # same disease. Emitting one edge per predicate produced two contradictory
+        # assertions about the same (variant, disease) -- 27,256 of 193,568 pairs in the
+        # release before this fix. Emit the strongest assertion only; the full set of
+        # submitted ClinicalSignificance values is still carried in original_predicate.
+        for pred in [CAUSES if CAUSES in predicate else ASSOCIATED_WITH]:
             negated = pred_to_negated[pred]
             entities.append(
                 VariantToDiseaseAssociation(
@@ -458,21 +493,6 @@ def process_row(row, var_records, map_to_mondo, variant_genes):
                     primary_knowledge_source="infores:clinvar",
                     aggregator_knowledge_source=["infores:monarchinitiative"],
                     knowledge_level=KnowledgeLevelEnum.knowledge_assertion,
-                    agent_type=AgentTypeEnum.manual_agent,
-                )
-            )
-
-    for mondo_id, hp_terms in mondo_to_hp.items():
-        for hp_id in hp_terms:
-            entities.append(
-                VariantToPhenotypicFeatureAssociation(
-                    id=str(uuid.uuid4()),
-                    subject=seq_var.id,
-                    predicate=CONTRIBUTES_TO,
-                    object=hp_id,
-                    primary_knowledge_source="infores:clinvar",
-                    aggregator_knowledge_source=["infores:monarchinitiative"],
-                    knowledge_level=KnowledgeLevelEnum.observation,
                     agent_type=AgentTypeEnum.manual_agent,
                 )
             )
