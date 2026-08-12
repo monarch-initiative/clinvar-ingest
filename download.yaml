@@ -18,6 +18,11 @@
 - url: https://ftp.ncbi.nlm.nih.gov/pub/clinvar/tab_delimited/variant_summary.txt.gz
   local_name: data/variant_summary.txt.gz
 
+# Per-variant literature links. Used to admit <=1-star calls under the weaker
+# associated_with predicate -- see load_pubmed_variants() in src/clinvar_helpers.py.
+- url: https://ftp.ncbi.nlm.nih.gov/pub/clinvar/tab_delimited/var_citations.txt
+  local_name: data/var_citations.txt
+
 - url: https://data.monarchinitiative.org/mappings/latest/mondo.sssom.tsv
   local_name: data/mondo.sssom.tsv
 

@@ -902,3 +902,47 @@ def test_likely_pathogenic_also_causes():
     assert len(disease_edges) == 1
     assert disease_edges[0].predicate == "biolink:causes"
     assert disease_edges[0].original_predicate == "Likely pathogenic"
+
+
+def test_non_snv_indel_classes_are_pruned():
+    """Only SNVs and indels are ingested. Microsatellites, inversions and the catch-all
+    "Variation" class are dropped up front -- a repeat expansion or inversion is not well
+    represented by a fixed REF/ALT."""
+    for clnvc in ("Microsatellite", "Inversion", "Variation"):
+        row = {**_TEST_ROW_TEMPLATE, "ID": "1296989", "CLNVC": clnvc}
+        assert process_row(row, VAR_RECORDS, MAP_TO_MONDO, VARIANT_GENES) == [], clnvc
+    kept = {**_TEST_ROW_TEMPLATE, "ID": "1296989", "CLNVC": "single_nucleotide_variant",
+            "CLNDISDB": "MONDO:MONDO:0100283,MedGen:CN300503"}
+    assert process_row(kept, VAR_RECORDS, MAP_TO_MONDO, VARIANT_GENES) != []
+
+
+def test_low_star_with_publication_is_associated_with():
+    """A <=1-star call has no multi-submitter corroboration, but published support lets it
+    in under the weaker associated_with predicate. Without a citation it is dropped."""
+    row = {**_TEST_ROW_TEMPLATE, "ID": "9000007",
+           "CLNREVSTAT": "criteria_provided,_single_submitter"}
+    records = [_make_record("Pathogenic", "C2981140", "Glaucoma_of_childhood",
+                            review_status="criteria provided, single submitter")]
+    genes = {"9000007": ("NCBIGene:4653", "MYOC")}
+
+    without = process_row(row, {"9000007": records}, MAP_TO_MONDO, genes, frozenset())
+    assert [e for e in without if isinstance(e, VariantToDiseaseAssociation)] == []
+
+    with_pub = process_row(row, {"9000007": records}, MAP_TO_MONDO, genes, {"9000007"})
+    edges = [e for e in with_pub if isinstance(e, VariantToDiseaseAssociation)]
+    assert len(edges) == 1
+    assert edges[0].predicate == "biolink:associated_with_increased_likelihood_of"
+
+
+def test_strong_evidence_never_downgraded_by_publication_tier():
+    """A variant that already qualifies at >=2 stars keeps `causes` for that disease even
+    if it also has a citation -- the tiers cannot both claim the same (variant, disease)."""
+    row = {**_TEST_ROW_TEMPLATE, "ID": "9000008",
+           "CLNREVSTAT": "criteria_provided,_multiple_submitters,_no_conflicts"}
+    records = [_make_record("Pathogenic", "C2981140", "Glaucoma_of_childhood",
+                            review_status="criteria provided, single submitter")]
+    edges = [e for e in process_row(row, {"9000008": records}, MAP_TO_MONDO,
+                                    {"9000008": ("NCBIGene:4653", "MYOC")}, {"9000008"})
+             if isinstance(e, VariantToDiseaseAssociation)]
+    assert len(edges) == 1
+    assert edges[0].predicate == "biolink:causes"

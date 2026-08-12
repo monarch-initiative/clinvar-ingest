@@ -48,12 +48,31 @@ min_concordant_submitters = 2
 # uses ClinVar's own multi-submitter inference rather than re-deriving one.
 aggregate_star_min = 2
 
-# Every Pathogenic-family classification asserts causation. "Likely pathogenic" is a
-# statement about the curator's confidence in the same causal claim, not a claim of a
-# weaker relationship, so mapping it to associated_with_increased_likelihood_of
-# misrepresented it -- and let one (variant, disease) carry both predicates at once.
-# ASSOCIATED_WITH is retained for a future evidence-strength tier (see section 7 of the
-# analysis report) but is not currently emitted.
+# Variant classes this ingest keeps (the VCF's CLNVC field). SNVs and indels only --
+# Microsatellite (38,744 rows), Inversion (1,519) and the catch-all "Variation" (459)
+# are excluded: repeat expansions and inversions are not well represented by a fixed
+# REF/ALT, and "Variation" carries no class at all. Adjust this set to change scope.
+KEPT_VARIANT_CLASSES = frozenset(
+    {
+        "single_nucleotide_variant",
+        "Deletion",
+        "Duplication",
+        "Indel",
+        "Insertion",
+    }
+)
+
+# Predicate by evidence strength, not by ClinicalSignificance. Every Pathogenic-family
+# classification asserts causation; what differs is how well corroborated it is.
+#   >=aggregate_star_min (ClinVar's own cross-submitter aggregate)  -> causes
+#   <=1 star, but with published support                           -> associated_with
+# A 1-star call with no publication behind it is not emitted at all.
+publication_star_max = 1
+
+# Which ClinicalSignificance values are eligible at all. "Likely pathogenic" expresses
+# the curator's confidence in a causal claim, not a weaker kind of relationship, so it is
+# not downgraded here. The predicate is chosen by
+# evidence tier (see above), not by which of these matched.
 predicate_map = {
     "Pathogenic": CAUSES,
     "Pathogenic, low penetrance": CAUSES,
@@ -204,6 +223,38 @@ def make_variant_gene_map(variant_summary_path, assembly_preference=ASSEMBLY_PRE
             symbol = symbol_pool.setdefault(symbol, symbol)
             gene_map[varid] = ("NCBIGene:{}".format(gene_id), symbol)
     return gene_map
+
+
+def load_pubmed_variants(citations_path):
+    """VariationIDs with at least one PubMed citation, from var_citations.txt.
+
+    PubMedCentral rows duplicate PubMed and NCBIBookShelf entries are GeneReviews-style
+    overviews rather than primary reports, so only PubMed is counted.
+
+    Caveat worth knowing: 2,438,423 variants -- 55% of the VCF -- carry a citation,
+    because large cohort papers cite thousands at once. A citation says the variant
+    appears in the literature, NOT that the literature supports pathogenicity. This is
+    therefore a weak signal, used only to admit <=1-star calls under the weaker
+    associated_with predicate. CollectionMethod == "literature only" in
+    submission_summary.txt is a tighter alternative (40,541 variants) tied to the
+    assertion itself rather than to the variant.
+    """
+    cited = set()
+    hcols = None
+    with open(citations_path, "r") as infile:
+        for line in infile:
+            line = line.strip("\r").strip("\n")
+            if not line:
+                continue
+            if line[0] == "#":
+                header = line.split("\t")
+                header[0] = header[0][1:]
+                hcols = {k: i for i, k in enumerate(header)}
+                continue
+            cols = line.split("\t")
+            if cols[hcols["citation_source"]] == "PubMed":
+                cited.add(cols[hcols["VariationID"]])
+    return cited
 
 
 def make_genes_from_row(gene_list):
@@ -392,7 +443,26 @@ def map_mondo_to_hp(group_info, disease_ids):
     return mondo_to_hp
 
 
-def process_row(row, var_records, map_to_mondo, variant_genes):
+def _disease_edge(subject, dis_id, predicate, og_preds, row):
+    """One VariantToDiseaseAssociation. Exactly one predicate is emitted per
+    (variant, disease): the strong tier claims a disease first, and the publication
+    tier only sees what is left, so the two can never contradict each other."""
+    return VariantToDiseaseAssociation(
+        id=str(uuid.uuid4()),
+        subject=subject,
+        predicate=predicate,
+        qualifiers=[row["CLNREVSTAT"]],
+        object=dis_id,
+        negated=pred_to_negated[predicate],
+        original_predicate=":".join(og_preds),
+        primary_knowledge_source="infores:clinvar",
+        aggregator_knowledge_source=["infores:monarchinitiative"],
+        knowledge_level=KnowledgeLevelEnum.knowledge_assertion,
+        agent_type=AgentTypeEnum.manual_agent,
+    )
+
+
+def process_row(row, var_records, map_to_mondo, variant_genes, pubmed_variants=frozenset()):
     """Process a single row from the ClinVar VCF and return a list of biolink entities.
 
     Returns an empty list if the row should be skipped (no records, no associations).
@@ -423,16 +493,36 @@ def process_row(row, var_records, map_to_mondo, variant_genes):
     if varid not in var_records:
         return []
 
+    # Prune to SNVs and indels up front -- see KEPT_VARIANT_CLASSES
+    if row["CLNVC"] not in KEPT_VARIANT_CLASSES:
+        return []
+
     gene_entry = variant_genes.get(varid)
     gene_ids = [gene_entry[0]] if gene_entry else []
 
+    records = var_records[varid]
+    aggregate_stars = review_star_map.get(row["CLNREVSTAT"], 0)
+
+    # Well-corroborated evidence -> causes
     disease_ids, disease_predicates, org_predicates = variant_records_to_disease(
-        var_records[varid],
+        records,
         map_to_mondo,
         star_min=var2disease_star_min,
         rescue_min_submitters=min_concordant_submitters,
-        aggregate_stars=review_star_map.get(row["CLNREVSTAT"], 0),
+        aggregate_stars=aggregate_stars,
     )
+
+    # Weakly corroborated (<=1 star) but with published support -> associated_with.
+    # Only for diseases the stronger tier did not already claim, so no (variant, disease)
+    # can carry both predicates.
+    assoc_ids: dict = {}
+    assoc_org: dict = {}
+    if aggregate_stars <= publication_star_max and varid in pubmed_variants:
+        all_ids, _all_preds, all_org = variant_records_to_disease(records, map_to_mondo, star_min=0)
+        for d in all_ids:
+            if d not in disease_ids:
+                assoc_ids[d] = ""
+                assoc_org[d] = all_org[d]
 
     # Corroboration check: at least one disease derived from the submission records must
     # also appear in the VCF's own aggregate CLNDISDB list for this variant. This gate
@@ -441,7 +531,9 @@ def process_row(row, var_records, map_to_mondo, variant_genes):
     # All-or-nothing per variant, and very nearly inert in practice: it drops 2 of 56,270.
     diss_info = parse_CLNDISDB(raw_diss_info)
     diss_info, _ = map_CLNDISDB_to_mondo(diss_info, map_to_mondo)
-    corroborated = map_mondo_to_hp(diss_info, disease_ids)
+    # Both tiers are subject to the gate -- a publication-tier disease must be echoed in
+    # CLNDISDB just as a causes-tier one must, so the union is what gets checked.
+    corroborated = map_mondo_to_hp(diss_info, {**disease_ids, **assoc_ids})
 
     if len(corroborated) == 0:
         return []
@@ -474,27 +566,11 @@ def process_row(row, var_records, map_to_mondo, variant_genes):
 
     for dis_id, predicate in disease_predicates.items():
         og_preds = sorted(list(org_predicates[dis_id].keys()))
-        # A variant often carries both Pathogenic and Likely-pathogenic records for the
-        # same disease. Emitting one edge per predicate produced two contradictory
-        # assertions about the same (variant, disease) -- 27,256 of 193,568 pairs in the
-        # release before this fix. Emit the strongest assertion only; the full set of
-        # submitted ClinicalSignificance values is still carried in original_predicate.
-        for pred in [CAUSES if CAUSES in predicate else ASSOCIATED_WITH]:
-            negated = pred_to_negated[pred]
-            entities.append(
-                VariantToDiseaseAssociation(
-                    id=str(uuid.uuid4()),
-                    subject=seq_var.id,
-                    predicate=pred,
-                    qualifiers=[row["CLNREVSTAT"]],
-                    object=dis_id,
-                    negated=negated,
-                    original_predicate=":".join(og_preds),
-                    primary_knowledge_source="infores:clinvar",
-                    aggregator_knowledge_source=["infores:monarchinitiative"],
-                    knowledge_level=KnowledgeLevelEnum.knowledge_assertion,
-                    agent_type=AgentTypeEnum.manual_agent,
-                )
-            )
+        entities.append(_disease_edge(seq_var.id, dis_id, CAUSES, og_preds, row))
+
+    # <=1 star with published support: a weaker claim, so a weaker predicate
+    for dis_id in assoc_ids:
+        og_preds = sorted(list(assoc_org[dis_id].keys()))
+        entities.append(_disease_edge(seq_var.id, dis_id, ASSOCIATED_WITH, og_preds, row))
 
     return entities

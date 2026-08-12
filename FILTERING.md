@@ -31,6 +31,8 @@ All in `src/clinvar_helpers.py`:
 var2disease_star_min      = 3               # per-submission review-status floor
 min_concordant_submitters = 2               # independent-agreement rescue threshold
 aggregate_star_min        = 2               # ClinVar's own variant-level CLNREVSTAT floor
+publication_star_max      = 1               # <=this many stars may still enter, if published
+KEPT_VARIANT_CLASSES      = {...}           # SNV / Deletion / Duplication / Indel / Insertion
 ASSEMBLY_PREFERENCE       = ("GRCh38", "GRCh37")
 predicate_map             = {...}           # which ClinicalSignificance values survive at all
 review_star_map           = {...}           # ReviewStatus text -> 0-4 stars
@@ -50,6 +52,19 @@ if varid not in var_records:
 ```
 
 A variant present in the VCF but absent from `submission_summary.txt` is dropped whole. No node.
+
+### Stage 1b — variant class must be an SNV or indel
+**File:** `clinvar.tsv` (`CLNVC`) · **Code:** `process_row()`
+
+```python
+if row["CLNVC"] not in KEPT_VARIANT_CLASSES:
+    return []
+```
+
+Keeps `single_nucleotide_variant`, `Deletion`, `Duplication`, `Indel`, `Insertion`. Drops
+`Microsatellite` (38,744), `Inversion` (1,519) and the catch-all `Variation` (459) — repeat
+expansions and inversions are not well described by a fixed REF/ALT, and `Variation` carries
+no class at all.
 
 ### Stage 2 — classification must be pathogenic-family
 **File:** `submission_summary.txt.gz` (`ClinicalSignificance`) · **Code:** `variant_records_to_disease()`
@@ -107,8 +122,20 @@ A (variant, disease) survives if **any** of three paths holds:
   the 2-star tier exists — it is a statement about agreement *between* records, so no single
   record can carry it, and paths A and B structurally cannot see it.
 
-Path C dominates: it accounts for roughly 95k of the ~102k variants the ingest emits. Paths A
-and B together contribute only ~7k that C would not have found on its own.
+- **Path D — published support for a weak call.** A variant whose aggregate is
+  `<= publication_star_max` (i.e. 1 star or less) and which has a PubMed citation in
+  `var_citations.txt` is admitted for the diseases the other paths did not claim — but under
+  `biolink:associated_with_increased_likelihood_of` rather than `causes`, because the evidence
+  is weaker. See `load_pubmed_variants()`.
+
+Paths A–C dominate the `causes` population: C alone accounts for roughly 95k of the ~102k
+variants they admit between them. Path D is much broader — 55% of all ClinVar variants carry a
+citation, so it admits a large share of the remaining P/LP population and currently produces
+more edges than A–C combined. `CollectionMethod == "literature only"` (40,541 variants) is a
+tighter signal tied to the assertion rather than the variant, if that tier needs narrowing.
+
+The tiers are disjoint by construction: A–C claim a disease first and D only sees what is
+left, so no (variant, disease) can carry both predicates.
 
 Two consequences that are easy to misread:
 
@@ -194,10 +221,10 @@ asserting a distinct phenotype.
 |---|---|---|
 | `SequenceVariant` node | — | stages 1–5 |
 | `VariantToGeneAssociation` | `biolink:is_sequence_variant_of` | stages 1–5, plus stage 6 |
-| `VariantToDiseaseAssociation` | `biolink:causes` | stages 1–5 |
+| `VariantToDiseaseAssociation` | `biolink:causes` (paths A–C) or `biolink:associated_with_increased_likelihood_of` (path D) | stages 1–5 |
 
-Current release: 101,909 nodes; 101,661 gene edges and 220,824 disease edges
-(140,324 `causes` + 80,500 `associated_with_increased_likelihood_of`). No phenotype edges.
+Current release: 251,819 nodes; 251,306 gene edges; 186,390 `causes` and 188,025
+`associated_with_increased_likelihood_of` disease edges. No phenotype edges.
 
 ## Known limitations of this approach
 
