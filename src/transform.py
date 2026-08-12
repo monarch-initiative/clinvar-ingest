@@ -3,7 +3,8 @@ import koza
 from clinvar_helpers import (
     make_medgen_to_mondo_map,
     make_mondo_map,
-    load_pubmed_variants,
+    build_pair_variant_counts,
+    literature_only_variants,
     make_variant_gene_map,
     make_variant_record_map,
     process_row,
@@ -14,7 +15,7 @@ sub_path = "./data/submission_summary.txt.gz"
 sssom_path = "./data/mondo.sssom.tsv"
 medgen_path = "./data/MedGenIDMappings.txt.gz"
 variant_summary_path = "./data/variant_summary.txt.gz"
-citations_path = "./data/var_citations.txt"
+clinvar_tsv_path = "./data/clinvar.tsv"
 
 @koza.on_data_begin()
 def load_auxiliary_data(koza_transform):
@@ -38,13 +39,22 @@ map_to_mondo.update(medgen_to_mondo)
 # replaces the VCF's positional GENEINFO field as the source of variant-gene edges
 variant_genes = make_variant_gene_map(variant_summary_path)
 
-# VariationIDs with a PubMed citation -- the evidence behind the <=1-star
-# associated_with tier (see publication_star_max in clinvar_helpers)
-pubmed_variants = load_pubmed_variants(citations_path)
+# Variants whose P/LP call was recorded as coming from the literature -- the evidence
+# behind the <=1-star associated_with tier (see publication_star_max)
+lit_only_variants = literature_only_variants(var_records)
+
+# Pre-pass: how many distinct variants support each (gene, disease). Inclusion is
+# otherwise a per-variant decision, so without this a pair enters the graph on one
+# variant's evidence -- see min_variants_per_pair.
+pair_variant_counts = build_pair_variant_counts(
+    clinvar_tsv_path, var_records, map_to_mondo, variant_genes, lit_only_variants
+)
 
 
 @koza.transform_record()
 def transform(koza_transform, row):
-    entities = process_row(row, var_records, map_to_mondo, variant_genes, pubmed_variants)
+    entities = process_row(
+        row, var_records, map_to_mondo, variant_genes, lit_only_variants, pair_variant_counts
+    )
     if entities:
         koza_transform.write(*entities)

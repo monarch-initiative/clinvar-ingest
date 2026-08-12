@@ -65,9 +65,24 @@ KEPT_VARIANT_CLASSES = frozenset(
 # Predicate by evidence strength, not by ClinicalSignificance. Every Pathogenic-family
 # classification asserts causation; what differs is how well corroborated it is.
 #   >=aggregate_star_min (ClinVar's own cross-submitter aggregate)  -> causes
-#   <=1 star, but with published support                           -> associated_with
-# A 1-star call with no publication behind it is not emitted at all.
+#   <=1 star, but derived from published evidence                   -> associated_with
+# A 1-star call with no published basis is not emitted at all.
+#
+# "Published evidence" means the submitting lab recorded CollectionMethod == "literature
+# only" on its Pathogenic/Likely-pathogenic record -- i.e. the classification itself came
+# from the literature. An earlier version used "the variant has a PubMed citation" from
+# var_citations.txt; that admitted 2,438,423 variants (55% of the VCF), because large
+# cohort papers cite thousands at once and a citation asserts nothing about pathogenicity.
+# This signal is attached to the assertion rather than the variant, and needs no extra file.
 publication_star_max = 1
+LITERATURE_ONLY = "literature only"
+
+# A gene-disease pair must be supported by at least this many distinct variants. Inclusion
+# is otherwise decided per variant, so a pair could enter the graph on a single variant's
+# evidence; requiring corroboration across variants is a different axis from ClinVar's
+# per-variant review status and disproportionately removes pairs resting only on the
+# weaker publication tier.
+min_variants_per_pair = 2
 
 # Which ClinicalSignificance values are eligible at all. "Likely pathogenic" expresses
 # the curator's confidence in a causal claim, not a weaker kind of relationship, so it is
@@ -223,38 +238,6 @@ def make_variant_gene_map(variant_summary_path, assembly_preference=ASSEMBLY_PRE
             symbol = symbol_pool.setdefault(symbol, symbol)
             gene_map[varid] = ("NCBIGene:{}".format(gene_id), symbol)
     return gene_map
-
-
-def load_pubmed_variants(citations_path):
-    """VariationIDs with at least one PubMed citation, from var_citations.txt.
-
-    PubMedCentral rows duplicate PubMed and NCBIBookShelf entries are GeneReviews-style
-    overviews rather than primary reports, so only PubMed is counted.
-
-    Caveat worth knowing: 2,438,423 variants -- 55% of the VCF -- carry a citation,
-    because large cohort papers cite thousands at once. A citation says the variant
-    appears in the literature, NOT that the literature supports pathogenicity. This is
-    therefore a weak signal, used only to admit <=1-star calls under the weaker
-    associated_with predicate. CollectionMethod == "literature only" in
-    submission_summary.txt is a tighter alternative (40,541 variants) tied to the
-    assertion itself rather than to the variant.
-    """
-    cited = set()
-    hcols = None
-    with open(citations_path, "r") as infile:
-        for line in infile:
-            line = line.strip("\r").strip("\n")
-            if not line:
-                continue
-            if line[0] == "#":
-                header = line.split("\t")
-                header[0] = header[0][1:]
-                hcols = {k: i for i, k in enumerate(header)}
-                continue
-            cols = line.split("\t")
-            if cols[hcols["citation_source"]] == "PubMed":
-                cited.add(cols[hcols["VariationID"]])
-    return cited
 
 
 def make_genes_from_row(gene_list):
@@ -462,7 +445,90 @@ def _disease_edge(subject, dis_id, predicate, og_preds, row):
     )
 
 
-def process_row(row, var_records, map_to_mondo, variant_genes, pubmed_variants=frozenset()):
+def literature_only_variants(var_records):
+    """VariationIDs with a Pathogenic/Likely-pathogenic submission whose CollectionMethod
+    is "literature only" -- the lab's pathogenic call was derived from published evidence.
+
+    Computed from var_records, so it costs no extra I/O and no extra download.
+    """
+    return {
+        varid
+        for varid, records in var_records.items()
+        if any(
+            rec["CollectionMethod"] == LITERATURE_ONLY
+            and rec["ClinicalSignificance"] in predicate_map
+            for rec in records
+        )
+    }
+
+
+def qualifying_diseases(row, records, map_to_mondo, lit_only_variants):
+    """Which diseases this variant qualifies for, and under which predicate.
+
+    Returns (causes, causes_org, assoc, assoc_org). The two tiers are disjoint: the
+    strong tier claims a disease first and the publication tier only sees what is left,
+    so no (variant, disease) can carry both predicates.
+
+    Shared by build_pair_variant_counts() and process_row() so the pre-pass that counts
+    supporting variants per pair and the pass that emits edges cannot disagree.
+    """
+    aggregate_stars = review_star_map.get(row["CLNREVSTAT"], 0)
+
+    causes, _preds, causes_org = variant_records_to_disease(
+        records,
+        map_to_mondo,
+        star_min=var2disease_star_min,
+        rescue_min_submitters=min_concordant_submitters,
+        aggregate_stars=aggregate_stars,
+    )
+
+    assoc: dict = {}
+    assoc_org: dict = {}
+    if aggregate_stars <= publication_star_max and row["ID"] in lit_only_variants:
+        all_ids, _all_preds, all_org = variant_records_to_disease(records, map_to_mondo, star_min=0)
+        for d in all_ids:
+            if d not in causes:
+                assoc[d] = ""
+                assoc_org[d] = all_org[d]
+
+    return causes, causes_org, assoc, assoc_org
+
+
+def build_pair_variant_counts(clinvar_tsv, var_records, map_to_mondo, variant_genes, lit_only_variants):
+    """(gene, disease) -> how many distinct variants qualify for it.
+
+    A pre-pass over the same rows the transform will stream, applying the same tier logic,
+    so process_row() can drop pairs supported by fewer than min_variants_per_pair variants.
+    Inclusion is otherwise a per-variant decision and a pair can enter the graph on one
+    variant alone.
+    """
+    import csv as _csv
+
+    counts = {}
+    with open(clinvar_tsv, newline="") as fh:
+        for row in _csv.DictReader(fh, delimiter="\t"):
+            varid = row["ID"]
+            records = var_records.get(varid)
+            if records is None or row["CLNVC"] not in KEPT_VARIANT_CLASSES:
+                continue
+            gene_entry = variant_genes.get(varid)
+            if gene_entry is None:
+                continue
+            causes, _co, assoc, _ao = qualifying_diseases(row, records, map_to_mondo, lit_only_variants)
+            for d in list(causes) + list(assoc):
+                key = (gene_entry[0], d)
+                counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
+def process_row(
+    row,
+    var_records,
+    map_to_mondo,
+    variant_genes,
+    lit_only_variants=frozenset(),
+    pair_variant_counts=None,
+):
     """Process a single row from the ClinVar VCF and return a list of biolink entities.
 
     Returns an empty list if the row should be skipped (no records, no associations).
@@ -501,28 +567,22 @@ def process_row(row, var_records, map_to_mondo, variant_genes, pubmed_variants=f
     gene_ids = [gene_entry[0]] if gene_entry else []
 
     records = var_records[varid]
-    aggregate_stars = review_star_map.get(row["CLNREVSTAT"], 0)
-
-    # Well-corroborated evidence -> causes
-    disease_ids, disease_predicates, org_predicates = variant_records_to_disease(
-        records,
-        map_to_mondo,
-        star_min=var2disease_star_min,
-        rescue_min_submitters=min_concordant_submitters,
-        aggregate_stars=aggregate_stars,
+    disease_ids, org_predicates, assoc_ids, assoc_org = qualifying_diseases(
+        row, records, map_to_mondo, lit_only_variants
     )
 
-    # Weakly corroborated (<=1 star) but with published support -> associated_with.
-    # Only for diseases the stronger tier did not already claim, so no (variant, disease)
-    # can carry both predicates.
-    assoc_ids: dict = {}
-    assoc_org: dict = {}
-    if aggregate_stars <= publication_star_max and varid in pubmed_variants:
-        all_ids, _all_preds, all_org = variant_records_to_disease(records, map_to_mondo, star_min=0)
-        for d in all_ids:
-            if d not in disease_ids:
-                assoc_ids[d] = ""
-                assoc_org[d] = all_org[d]
+    # A pair supported by fewer than min_variants_per_pair distinct variants is dropped.
+    # Without this, a gene-disease pair enters the graph on one variant's evidence.
+    if pair_variant_counts is not None and gene_ids:
+        gene_id = gene_ids[0]
+        disease_ids = {
+            d: v for d, v in disease_ids.items()
+            if pair_variant_counts.get((gene_id, d), 0) >= min_variants_per_pair
+        }
+        assoc_ids = {
+            d: v for d, v in assoc_ids.items()
+            if pair_variant_counts.get((gene_id, d), 0) >= min_variants_per_pair
+        }
 
     # Corroboration check: at least one disease derived from the submission records must
     # also appear in the VCF's own aggregate CLNDISDB list for this variant. This gate
@@ -564,7 +624,7 @@ def process_row(row, var_records, map_to_mondo, variant_genes, pubmed_variants=f
             )
         )
 
-    for dis_id, predicate in disease_predicates.items():
+    for dis_id in disease_ids:
         og_preds = sorted(list(org_predicates[dis_id].keys()))
         entities.append(_disease_edge(seq_var.id, dis_id, CAUSES, og_preds, row))
 

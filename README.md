@@ -20,7 +20,9 @@ SequenceVariant nodes are created from ClinVar variants deemed Pathogenic or Lik
 2. **Multi-submitter concordance** — at least 2 independent submitters agree on the same disease with the same classification, regardless of each submitter's own review status.
 3. **ClinVar's aggregate review status** — the variant's `CLNREVSTAT` in the VCF reaches 2 or more stars ("criteria provided, multiple submitters, no conflicts").
 
-Those three all yield **"causes"**. A fourth path admits weaker evidence under a weaker predicate: a variant scoring 1 star or less that has a PubMed citation in `var_citations.txt` is emitted as **"associated_with_increased_likelihood_of"**. The paths are disjoint, so no variant-disease pair carries both.
+Those three all yield **"causes"**. A fourth path admits weaker evidence under a weaker predicate: a variant scoring 1 star or less whose submitting lab recorded `CollectionMethod == "literature only"` on its Pathogenic/Likely-pathogenic record — i.e. the classification itself came from published evidence — is emitted as **"associated_with_increased_likelihood_of"**. The paths are disjoint, so no variant-disease pair carries both.
+
+Finally, a gene-disease pair must be supported by **at least 2 distinct variants** (`min_variants_per_pair`). Every other rule decides per variant, so without this a pair could enter the graph on a single variant's evidence.
 
 Only SNVs and indels are ingested — `KEPT_VARIANT_CLASSES` keeps `single_nucleotide_variant`, `Deletion`, `Duplication`, `Indel` and `Insertion`, and drops Microsatellites, Inversions and the catch-all "Variation" class.
 

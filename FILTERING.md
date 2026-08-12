@@ -32,6 +32,7 @@ var2disease_star_min      = 3               # per-submission review-status floor
 min_concordant_submitters = 2               # independent-agreement rescue threshold
 aggregate_star_min        = 2               # ClinVar's own variant-level CLNREVSTAT floor
 publication_star_max      = 1               # <=this many stars may still enter, if published
+min_variants_per_pair     = 2               # a gene-disease pair needs this many variants
 KEPT_VARIANT_CLASSES      = {...}           # SNV / Deletion / Duplication / Indel / Insertion
 ASSEMBLY_PREFERENCE       = ("GRCh38", "GRCh37")
 predicate_map             = {...}           # which ClinicalSignificance values survive at all
@@ -122,17 +123,20 @@ A (variant, disease) survives if **any** of three paths holds:
   the 2-star tier exists — it is a statement about agreement *between* records, so no single
   record can carry it, and paths A and B structurally cannot see it.
 
-- **Path D — published support for a weak call.** A variant whose aggregate is
-  `<= publication_star_max` (i.e. 1 star or less) and which has a PubMed citation in
-  `var_citations.txt` is admitted for the diseases the other paths did not claim — but under
-  `biolink:associated_with_increased_likelihood_of` rather than `causes`, because the evidence
-  is weaker. See `load_pubmed_variants()`.
+- **Path D — the classification came from the literature.** A variant whose aggregate is
+  `<= publication_star_max` (1 star or less) and which has a P/LP record with
+  `CollectionMethod == "literature only"` is admitted for the diseases the other paths did not
+  claim — but under `biolink:associated_with_increased_likelihood_of`, because the evidence is
+  weaker. See `literature_only_variants()`.
 
-Paths A–C dominate the `causes` population: C alone accounts for roughly 95k of the ~102k
-variants they admit between them. Path D is much broader — 55% of all ClinVar variants carry a
-citation, so it admits a large share of the remaining P/LP population and currently produces
-more edges than A–C combined. `CollectionMethod == "literature only"` (40,541 variants) is a
-tighter signal tied to the assertion rather than the variant, if that tier needs narrowing.
+  The signal is deliberately attached to the *assertion*, not the variant. An earlier version
+  used "the variant has a PubMed citation" (`var_citations.txt`), which matched 2,438,423
+  variants — 55% of the archive — because large cohort papers cite thousands at once and a
+  citation asserts nothing about pathogenicity. `CollectionMethod == "literature only"` marks
+  38,841 variants whose submitting lab recorded that its pathogenic call came from published
+  evidence.
+
+Paths A–C dominate: they produce 183,167 `causes` edges against path D's 21,996.
 
 The tiers are disjoint by construction: A–C claim a disease first and D only sees what is
 left, so no (variant, disease) can carry both predicates.
@@ -180,6 +184,25 @@ gates hard in principle and almost never in fact.
 duplication — not the molecular consequence from `MC` (missense, frameshift). Consequence is a
 property of variant × transcript, not of the variant. `MC` is no longer read by the ingest.
 
+### Stage 5c — the gene-disease pair needs corroborating variants
+**Files:** all of them · **Code:** `build_pair_variant_counts()` → `process_row()`
+
+```python
+if pair_variant_counts.get((gene_id, disease), 0) < min_variants_per_pair:
+    continue   # drop this disease for this variant
+```
+
+Every other stage decides per variant, so a gene-disease pair could enter the graph on one
+variant's evidence. This requires **≥2 distinct variants** to support the pair.
+
+It needs a pre-pass: `build_pair_variant_counts()` walks the same rows the transform will
+stream, applies the same tier logic via the shared `qualifying_diseases()`, and counts
+distinct variants per `(gene, disease)`. Both passes call the same function so the counting
+and the emitting cannot disagree. Cost is a second full traversal of `clinvar.tsv`.
+
+The threshold removes weak evidence disproportionately: it costs `causes` 1.7% while
+removing most pairs that rested on path D alone.
+
 ### Stage 6 — gene attribution
 **File:** `variant_summary.txt.gz` · **Code:** `make_variant_gene_map()`
 
@@ -223,8 +246,9 @@ asserting a distinct phenotype.
 | `VariantToGeneAssociation` | `biolink:is_sequence_variant_of` | stages 1–5, plus stage 6 |
 | `VariantToDiseaseAssociation` | `biolink:causes` (paths A–C) or `biolink:associated_with_increased_likelihood_of` (path D) | stages 1–5 |
 
-Current release: 251,819 nodes; 251,306 gene edges; 186,390 `causes` and 188,025
-`associated_with_increased_likelihood_of` disease edges. No phenotype edges.
+Current release: 116,739 nodes; 116,467 gene edges; 183,167 `causes` and 21,996
+`associated_with_increased_likelihood_of` disease edges, across 8,927 gene-disease pairs
+(4,131 genes, 6,573 diseases). No phenotype edges.
 
 ## Known limitations of this approach
 

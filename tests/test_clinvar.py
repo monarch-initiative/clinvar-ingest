@@ -916,9 +916,10 @@ def test_non_snv_indel_classes_are_pruned():
     assert process_row(kept, VAR_RECORDS, MAP_TO_MONDO, VARIANT_GENES) != []
 
 
-def test_low_star_with_publication_is_associated_with():
-    """A <=1-star call has no multi-submitter corroboration, but published support lets it
-    in under the weaker associated_with predicate. Without a citation it is dropped."""
+def test_low_star_from_literature_is_associated_with():
+    """A <=1-star call has no multi-submitter corroboration, but a classification the lab
+    recorded as coming from the literature enters under the weaker predicate. Without that,
+    it is dropped -- "the variant appears in a paper" is not the same claim."""
     row = {**_TEST_ROW_TEMPLATE, "ID": "9000007",
            "CLNREVSTAT": "criteria_provided,_single_submitter"}
     records = [_make_record("Pathogenic", "C2981140", "Glaucoma_of_childhood",
@@ -928,10 +929,41 @@ def test_low_star_with_publication_is_associated_with():
     without = process_row(row, {"9000007": records}, MAP_TO_MONDO, genes, frozenset())
     assert [e for e in without if isinstance(e, VariantToDiseaseAssociation)] == []
 
-    with_pub = process_row(row, {"9000007": records}, MAP_TO_MONDO, genes, {"9000007"})
-    edges = [e for e in with_pub if isinstance(e, VariantToDiseaseAssociation)]
+    with_lit = process_row(row, {"9000007": records}, MAP_TO_MONDO, genes, {"9000007"})
+    edges = [e for e in with_lit if isinstance(e, VariantToDiseaseAssociation)]
     assert len(edges) == 1
     assert edges[0].predicate == "biolink:associated_with_increased_likelihood_of"
+
+
+def test_literature_only_variants_reads_collection_method():
+    """The publication signal is CollectionMethod on a P/LP record, not the mere existence
+    of a citation for the variant."""
+    from clinvar_helpers import literature_only_variants
+
+    lit = _make_record("Pathogenic", "C2981140", "Glaucoma_of_childhood")
+    lit["CollectionMethod"] = "literature only"
+    clinical = _make_record("Pathogenic", "C2981140", "Glaucoma_of_childhood")
+    benign_lit = _make_record("Benign", "C2981140", "Glaucoma_of_childhood")
+    benign_lit["CollectionMethod"] = "literature only"
+
+    found = literature_only_variants({"a": [lit], "b": [clinical], "c": [benign_lit]})
+    assert found == {"a"}, "only a literature-derived P/LP record counts"
+
+
+def test_pair_below_variant_threshold_is_dropped():
+    """A gene-disease pair supported by fewer than min_variants_per_pair distinct variants
+    is dropped, even when the variant itself qualifies on review status."""
+    row = {**_TEST_ROW_TEMPLATE, "ID": "1296989",
+           "CLNDISDB": "MONDO:MONDO:0100283,MedGen:CN300503"}
+    pair = ("NCBIGene:2475", "MONDO:0100283")
+
+    below = process_row(row, VAR_RECORDS, MAP_TO_MONDO, VARIANT_GENES,
+                        frozenset(), {pair: 1})
+    assert [e for e in below if isinstance(e, VariantToDiseaseAssociation)] == []
+
+    at = process_row(row, VAR_RECORDS, MAP_TO_MONDO, VARIANT_GENES,
+                     frozenset(), {pair: 2})
+    assert len([e for e in at if isinstance(e, VariantToDiseaseAssociation)]) == 1
 
 
 def test_strong_evidence_never_downgraded_by_publication_tier():
