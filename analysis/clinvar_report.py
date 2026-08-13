@@ -44,10 +44,12 @@ Section numbers below match the rendered report's headings (1 Purpose,
    crossing (variant->gene) with (variant->disease), so this measures how
    much submitted variant evidence stands behind each curated association
    and what ClinVar implies that no curator has asserted. Because MONDO
-   carries several co-existing terms for overlapping entities, exact-id
+   carries several co-existing terms over one clinical area, exact-id
    mismatches are additionally classified by whether Monarch links the same
-   gene to an ancestor or descendant of ClinVar's term -- see the SCN1A
-   worked example, where sibling terms split one relationship in two.
+   gene to an ancestor or descendant of ClinVar's term. That classification
+   is a *candidate* list, not a duplicate count -- see the SCN1A worked
+   example, where nearby terms split the evidence but MONDO holds them
+   apart deliberately.
 
 6. Clinical significance & review-status crossfilter (variant-level, from
    clinvar.vcf.gz directly): CLNREVSTAT here IS ClinVar's aggregate
@@ -671,6 +673,338 @@ MUTATION_GALLERY = [
     },
     {"key": "inversion", "kind": "sv", "title": "Inversion", "cartoon": cartoon_inversion, "gene_label": "MSH2"},
 ]
+
+
+
+# ---------------------------------------------------------------------------
+# SCN1A: MONDO's real disease hierarchy, the gene, and variant sharing
+# ---------------------------------------------------------------------------
+
+SCN1A_SUBGRAPH_FILE = "scn1a_mondo_subgraph.json"
+
+# Row assignment follows MONDO's actual subclass depth (fetched from OLS4); only the
+# horizontal placement is chosen for legibility.
+SCN1A_LAYOUT = {
+    "MONDO:0005027": (350, 30, 240),
+    "MONDO:0015650": (20, 120, 260),
+    "MONDO:0100620": (620, 120, 320),
+    "MONDO:0100022": (20, 220, 260),
+    "MONDO:0100062": (620, 235, 320),
+    "MONDO:0800490": (20, 330, 300),
+    "MONDO:0800491": (150, 460, 280),
+    "MONDO:0100135": (470, 460, 220),
+    "MONDO:0100079": (720, 460, 220),
+    "MONDO:0030268": (720, 555, 220),
+}
+SCN1A_GENE_BOX = (150, 780, 280)
+
+# average glyph width as a fraction of font-size for the sans stack used here; used to
+# wrap label text so it stays inside its box rather than spilling past the border
+_CHAR_W = 0.53
+
+
+def _fit_lines(text: str, box_w: int, font_size: float, max_lines: int = 3) -> list:
+    """Greedy word-wrap to fit box_w, with an ellipsis if it still will not fit."""
+    per_line = max(8, int((box_w - 16) / (font_size * _CHAR_W)))
+    words, lines, cur = text.split(), [], ""
+    for word in words:
+        trial = f"{cur} {word}".strip()
+        if len(trial) <= per_line:
+            cur = trial
+        else:
+            if cur:
+                lines.append(cur)
+            cur = word
+            if len(lines) == max_lines:
+                break
+    if cur and len(lines) < max_lines:
+        lines.append(cur)
+    if not lines:
+        return [text[:per_line]]
+    consumed = len(" ".join(lines))
+    if consumed < len(text) - 1:
+        last = lines[-1]
+        lines[-1] = (last[: per_line - 1] + "\u2026") if len(last) + 1 > per_line else last + "\u2026"
+    return lines
+
+
+def load_scn1a_subgraph(data_dir: Path) -> dict:
+    """MONDO's real hierarchy for SCN1A's main disease terms, cached from OLS4, with
+    per-term variant/submitter counts and the variant overlap between terms."""
+    path = data_dir / SCN1A_SUBGRAPH_FILE
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text())
+
+
+def _short_term(label: str) -> str:
+    """Compact a MONDO label for one-line use, keeping what distinguishes it. Several of
+    SCN1A's terms share the prefix "developmental and epileptic encephalopathy", so a plain
+    truncation renders different diseases identically."""
+    short = label.replace("developmental and epileptic encephalopathy", "DEE")
+    short = short.replace("neonatal/infantile-onset epilepsy syndrome with", "neonatal/infantile")
+    return short if len(short) <= 44 else short[:43] + "\u2026"
+
+
+def diagram_scn1a_hierarchy(sub: dict) -> str:
+    """SCN1A's disease terms as MONDO actually relates them, with the gene attached and
+    the variant overlap between terms drawn on top.
+
+    The structure is MONDO's own (OLS4 `hierarchicalParents`), not a simplification. The
+    point it makes is the opposite of what a quick look suggests: these are *distinct*
+    syndromes MONDO deliberately separates -- MONDO:0800491 is Ohtahara syndrome / early
+    infantile epileptic encephalopathy (onset <=3 months, suppression-burst EEG), and the
+    Dravet entry carries an explicit note that it is a distinct class from DEE 6A. Variants
+    shared between them are therefore evidence of SCN1A's phenotypic spectrum, not of
+    duplicate terminology.
+    """
+    if not sub:
+        return "<p class='subtitle'>SCN1A subgraph not cached -- see load_scn1a_subgraph().</p>"
+
+    labels, stats, parents = sub["labels"], sub["stats"], sub["parents"]
+    shares = sub.get("shares", {})
+    boxes, edges, notes, share_labels = [], [], [], []
+
+    def centre(m):
+        x, y, w = SCN1A_LAYOUT[m]
+        return x + w / 2, y
+
+    heights = {}
+    for _m, (_x, _y, _w) in SCN1A_LAYOUT.items():
+        _st = stats.get(_m, {})
+        _n = len(_fit_lines(labels.get(_m, _m), _w, 11))
+        _h = 8 + 13 * _n + 13 + (15 if _st.get("variants") else 14)
+        if _st.get("submitters") == 1 and _st.get("lead"):
+            _h += 12
+        heights[_m] = _h + 6
+
+    for child, ps in parents.items():
+        if child not in SCN1A_LAYOUT:
+            continue
+        cx, cy = centre(child)
+        for i, parent in enumerate(ps):
+            if parent not in SCN1A_LAYOUT:
+                continue
+            px, py, pw = SCN1A_LAYOUT[parent]
+            x2, y2 = px + pw / 2, py + heights.get(parent, 62)
+            dash = " stroke-dasharray='5,4'" if i else ""
+            edges.append(
+                f"<path d='M{cx:.0f},{cy:.0f} C{cx:.0f},{(cy + y2) / 2:.0f} "
+                f"{x2:.0f},{(cy + y2) / 2:.0f} {x2:.0f},{y2:.0f}' fill='none' "
+                f"stroke='#94a3b8' stroke-width='1.6'{dash} marker-end='url(#arr-scn)'/>"
+            )
+
+    for mondo, (x, y, w) in SCN1A_LAYOUT.items():
+        st = stats.get(mondo, {})
+        n_var, n_sub = st.get("variants", 0), st.get("submitters", 0)
+        lead = st.get("lead", "")
+        if n_var == 0:
+            fill, stroke, txt = "#f1f5f9", "#cbd5e1", "#475569"
+        elif n_sub == 1:
+            fill, stroke, txt = "#fee2e2", "#b91c1c", "#7f1d1d"
+        elif n_sub >= 20:
+            fill, stroke, txt = "#dcfce7", "#15803d", "#14532d"
+        else:
+            fill, stroke, txt = "#fef9c3", "#a16207", "#713f12"
+
+        h = heights[mondo]
+        boxes.append(
+            f"<rect x='{x}' y='{y}' width='{w}' height='{h}' rx='6' fill='{fill}' "
+            f"stroke='{stroke}' stroke-width='1.5'/>"
+        )
+        cy = y + 16
+        for line in _fit_lines(labels.get(mondo, mondo), w, 11):
+            boxes.append(
+                f"<text x='{x + 8}' y='{cy}' font-size='11' font-weight='600' fill='{txt}'>"
+                f"{line}</text>"
+            )
+            cy += 13
+        boxes.append(
+            f"<text x='{x + 8}' y='{cy}' font-size='9' font-family='ui-monospace,monospace' "
+            f"fill='#64748b'>{mondo}</text>"
+        )
+        cy += 15
+        if n_var:
+            boxes.append(
+                f"<text x='{x + 8}' y='{cy}' font-size='10' fill='{txt}'>"
+                f"<tspan font-weight='700'>{n_var:,}</tspan> variants &#183; "
+                f"<tspan font-weight='700'>{n_sub}</tspan> lab{'' if n_sub == 1 else 's'}</text>"
+            )
+            if n_sub == 1 and lead:
+                cy += 12
+                for line in _fit_lines("only: " + lead, w, 8.5, max_lines=1):
+                    boxes.append(
+                        f"<text x='{x + 8}' y='{cy}' font-size='8.5' fill='#b91c1c'>{line}</text>"
+                    )
+        else:
+            boxes.append(
+                f"<text x='{x + 8}' y='{cy}' font-size='9.5' fill='#94a3b8'>"
+                f"no SCN1A variants here</text>"
+            )
+
+    # OMIM / Orphanet coverage, drawn above each box in its own layer so it can be
+    # toggled off. Which source vocabulary a term carries explains which labs land on it.
+    xref_layer = []
+    xrefs = sub.get("xrefs", {})
+    for mondo, (x, y, w) in SCN1A_LAYOUT.items():
+        xr = xrefs.get(mondo, {})
+        bits = []
+        if xr.get("OMIM"):
+            bits.append(("#7c3aed", ", ".join(xr["OMIM"])))
+        if xr.get("Orphanet"):
+            bits.append(("#0891b2", ", ".join(xr["Orphanet"])))
+        if not bits:
+            bits.append(("#94a3b8", "no OMIM / Orphanet id"))
+        bx = x
+        for colour, text in bits:
+            pw = len(text) * 5.2 + 12
+            xref_layer.append(
+                f"<rect x='{bx:.0f}' y='{y - 17}' width='{pw:.0f}' height='14' rx='7' "
+                f"fill='#ffffff' stroke='{colour}' stroke-width='1'/>"
+                f"<text x='{bx + 6:.0f}' y='{y - 6.5}' font-size='8.5' fill='{colour}'>{text}</text>"
+            )
+            bx += pw + 4
+
+    # the gene, wired to every term that carries its variants
+    gx, gy, gw = SCN1A_GENE_BOX
+    boxes.append(
+        f"<rect x='{gx}' y='{gy}' width='{gw}' height='46' rx='6' fill='#1e293b' stroke='#0f172a'/>"
+        f"<text x='{gx + 12}' y='{gy + 20}' font-size='13' font-weight='700' fill='#f8fafc'>SCN1A</text>"
+        f"<text x='{gx + 12}' y='{gy + 36}' font-size='9.5' fill='#cbd5e1'>"
+        f"NCBIGene:6323 &#183; one gene, many syndromes</text>"
+    )
+    for mondo in SCN1A_LAYOUT:
+        if not stats.get(mondo, {}).get("variants"):
+            continue
+        tx, ty, tw = SCN1A_LAYOUT[mondo]
+        edges.append(
+            f"<path d='M{gx + gw / 2:.0f},{gy} C{gx + gw / 2:.0f},{gy - 40} "
+            f"{tx + tw / 2:.0f},{ty + 120} {tx + tw / 2:.0f},{ty + heights.get(mondo, 62)}' fill='none' "
+            f"stroke='#334155' stroke-width='1' stroke-dasharray='2,3' opacity='0.55'/>"
+        )
+
+    # Variant sharing drawn as connectors, laid out so none of them cross.
+    #
+    # Two rules make that work. Anchors along a box's bottom edge are ordered by how far
+    # away the partner is -- the most distant partner takes the outermost anchor -- so
+    # spans nest rather than partially overlap. Lanes are then assigned widest-span-first,
+    # putting the widest connector furthest from the boxes. A vertical therefore never
+    # drops through another connector's horizontal.
+    SHARE_COLOR = "#ea580c"
+    top = [(pair, n) for pair, n in sorted(shares.items(), key=lambda kv: -kv[1])
+           if all(t in SCN1A_LAYOUT for t in pair.split("|"))][:3]
+    max_n = max((n for _p, n in top), default=1)
+
+    def box_centre(t):
+        x, _y, w = SCN1A_LAYOUT[t]
+        return x + w / 2
+
+    # per box: partners, ordered most-distant first, then anchored outside-in
+    anchors = {}
+    for term in {t for pair, _n in top for t in pair.split("|")}:
+        partners = []
+        for pair, _n in top:
+            a, b = pair.split("|")
+            if term in (a, b):
+                partners.append((pair, b if term == a else a))
+        cx = box_centre(term)
+        # a partner to the right wants a left-hand anchor when it is the far one, so the
+        # wider span encloses the narrower
+        partners.sort(key=lambda pp: -abs(box_centre(pp[1]) - cx))
+        x, _y, w = SCN1A_LAYOUT[term]
+        n_p = len(partners)
+        for i, (pair, partner) in enumerate(partners):
+            if box_centre(partner) > cx:
+                frac = (i + 1) / (n_p + 1)          # further partner -> further left
+            else:
+                frac = 1 - (i + 1) / (n_p + 1)      # mirrored for left-hand partners
+            anchors[(term, pair)] = x + w * frac
+
+    # widest span gets the lowest lane
+    spans = {}
+    for pair, _n in top:
+        a, b = pair.split("|")
+        xa, xb = anchors[(a, pair)], anchors[(b, pair)]
+        spans[pair] = abs(xa - xb)
+    ordered = sorted(top, key=lambda pn: -spans[pn[0]])
+    lane_of = {}
+    lane_y = 660 + 40 * (len(ordered) - 1)
+    for pair, _n in ordered:
+        lane_of[pair] = lane_y
+        lane_y -= 40
+
+    for pair, n in top:
+        a, b = pair.split("|")
+        xa, xb = anchors[(a, pair)], anchors[(b, pair)]
+        abot = SCN1A_LAYOUT[a][1] + heights.get(a, 62)
+        bbot = SCN1A_LAYOUT[b][1] + heights.get(b, 62)
+        ly = lane_of[pair]
+        width = 3 + 6 * (n / max_n)
+        notes.append(
+            f"<path d='M{xa:.0f},{abot:.0f} L{xa:.0f},{ly} L{xb:.0f},{ly} "
+            f"L{xb:.0f},{bbot:.0f}' fill='none' stroke='{SHARE_COLOR}' "
+            f"stroke-width='{width:.1f}' stroke-linecap='round' stroke-linejoin='round'/>"
+        )
+        mid = (xa + xb) / 2
+        label = f"{n:,} variants reported to both"
+        box_w = len(label) * 5.6 + 16
+        share_labels.append(
+            f"<rect x='{mid - box_w / 2:.0f}' y='{ly - 10}' width='{box_w:.0f}' "
+            f"height='20' rx='10' fill='#ffffff' stroke='{SHARE_COLOR}' stroke-width='1.4'/>"
+            f"<text x='{mid:.0f}' y='{ly + 4}' font-size='10.5' font-weight='700' "
+            f"text-anchor='middle' fill='#9a3412'>{label}</text>"
+            f"<text x='{mid:.0f}' y='{ly + 24}' font-size='9' text-anchor='middle' "
+            f"fill='#9a3412'>{_short_term(labels.get(a, a))} &#8596; "
+            f"{_short_term(labels.get(b, b))}</text>"
+        )
+
+    legend = (
+        "<rect x='20' y='10' width='920' height='58' rx='6' fill='#f8fafc' stroke='#e2e8f0'/>"
+        "<text x='32' y='27' font-size='10.5' font-weight='700' fill='#334155'>Legend</text>"
+        # edge kinds
+        "<line x1='90' y1='38' x2='125' y2='38' stroke='#94a3b8' stroke-width='1.6'/>"
+        "<text x='131' y='41' font-size='9.5' fill='#475569'>subclass_of (first parent)</text>"
+        "<line x1='285' y1='38' x2='320' y2='38' stroke='#94a3b8' stroke-width='1.6' "
+        "stroke-dasharray='5,4'/>"
+        "<text x='326' y='41' font-size='9.5' fill='#475569'>second parent (MONDO is a DAG)</text>"
+        "<line x1='545' y1='38' x2='580' y2='38' stroke='#334155' stroke-width='1' "
+        "stroke-dasharray='2,3'/>"
+        "<text x='586' y='41' font-size='9.5' fill='#475569'>SCN1A variants reported here</text>"
+        "<line x1='90' y1='57' x2='125' y2='57' stroke='#ea580c' stroke-width='7' "
+        "stroke-linecap='round'/>"
+        "<text x='131' y='60' font-size='9.5' fill='#9a3412'>variants reported to BOTH terms "
+        "&#8212; SCN1A's phenotypic spectrum, not duplicate terminology</text>"
+        # colour key
+        "<rect x='545' y='51' width='12' height='11' rx='2' fill='#fee2e2' stroke='#b91c1c'/>"
+        "<text x='561' y='60' font-size='9.5' fill='#475569'>1 lab</text>"
+        "<rect x='600' y='51' width='12' height='11' rx='2' fill='#fef9c3' stroke='#a16207'/>"
+        "<text x='616' y='60' font-size='9.5' fill='#475569'>&lt;20 labs</text>"
+        "<rect x='670' y='51' width='12' height='11' rx='2' fill='#dcfce7' stroke='#15803d'/>"
+        "<text x='686' y='60' font-size='9.5' fill='#475569'>20+ labs</text>"
+        "<rect x='745' y='51' width='12' height='11' rx='2' fill='#f1f5f9' stroke='#cbd5e1'/>"
+        "<text x='761' y='60' font-size='9.5' fill='#475569'>no SCN1A variants</text>"
+    )
+
+    # z-order: connectors and hierarchy edges first, boxes on top so nothing is drawn
+    # over them, then the connector labels which must stay readable above everything
+    return (
+        "<svg viewBox='0 0 960 960' xmlns='http://www.w3.org/2000/svg' "
+        "style='width:100%; height:auto;'>"
+        "<defs><marker id='arr-scn' viewBox='0 0 10 10' refX='9' refY='5' markerWidth='5' "
+        "markerHeight='5' orient='auto-start-reverse'>"
+        "<path d='M 0 0 L 10 5 L 0 10 z' fill='#94a3b8'/></marker></defs>"
+        + legend
+        + "<g transform='translate(0,90)'>"
+        + "".join(edges)
+        + "<g id='scn1a-shares'>" + "".join(notes) + "</g>"
+        + "".join(boxes)
+        + "<g id='scn1a-shares-labels'>" + "".join(share_labels) + "</g>"
+        + "<g id='scn1a-xrefs' style='display:none'>" + "".join(xref_layer) + "</g>"
+        + "</g>"
+        + "<text x='30' y='950' font-size='9.5' fill='#64748b'>"
+        "hierarchy from MONDO via OLS4 &#183; counts from this ClinVar release</text>"
+        "</svg>"
+    )
 
 
 def diagram_bams_fshd2_venn():
@@ -1425,6 +1759,60 @@ def load_maps(data_dir: Path):
     return var_records, map_to_mondo
 
 
+def sssom_label_collisions(data_dir: Path) -> dict:
+    """Source terms that more than one MONDO class claims.
+
+    If MONDO:A and MONDO:B both assert skos:exactMatch to source terms carrying the same
+    name, transitivity says they should be one class. This is a far better duplicate
+    *detector* than the subclass graph -- two terms sharing a parent are usually just
+    clinically related, whereas two terms claiming the same external identity are a
+    genuine inconsistency somewhere.
+
+    It is a detector and nothing more. Every mapping in the file carries
+    semapv:UnspecifiedMatching, so nothing records how any of them was made and there is
+    no provenance to adjudicate a collision with. See recommendation 2: report these for
+    curation, never merge on them. The SCN1A case is exactly why -- "dravet syndrome" is
+    claimed by three MONDO classes, and reading mondo#745 shows the OMIM:607208 ->
+    MONDO:0100079 mapping is a deliberate curatorial decision, not the bug it looks like.
+    A collision means "a human should look at this", nothing stronger.
+    """
+    path = data_dir / "mondo.sssom.tsv"
+    predicates: Counter = Counter()
+    justifications: Counter = Counter()
+    by_label: dict = {}
+    total = 0
+    with open(path) as f:
+        header = None
+        for line in f:
+            line = line.rstrip("\r\n")
+            if not line or line.startswith("#"):
+                continue
+            cols = line.split("\t")
+            if header is None:
+                header = {k: i for i, k in enumerate(cols)}
+                continue
+            if len(cols) <= max(header.values()):
+                continue
+            total += 1
+            predicates[cols[header["predicate_id"]]] += 1
+            justifications[cols[header["mapping_justification"]]] += 1
+            label = cols[header["object_label"]].strip().lower()
+            if label:
+                by_label.setdefault(label, set()).add(cols[header["subject_id"]])
+
+    collisions = {lab: sorted(t) for lab, t in by_label.items() if len(t) > 1}
+    exact = predicates.get("skos:exactMatch", 0)
+    unspec = justifications.get("semapv:UnspecifiedMatching", 0)
+    return {
+        "total": total,
+        "n_labels": len(by_label),
+        "n_collisions": len(collisions),
+        "exact_pct": 100 * exact / (total or 1),
+        "unspecified_pct": 100 * unspec / (total or 1),
+        "dravet": collisions.get("dravet syndrome", []),
+    }
+
+
 def load_mondo_labels(data_dir: Path) -> dict:
     """mondo.sssom.tsv's subject_id/subject_label columns give a human-readable
     name for each MONDO id -- the same subject_id values used as disease ids
@@ -1669,6 +2057,13 @@ def compute_star_data(clinvar_tsv: Path, var_records: dict, map_to_mondo: dict, 
             }
         )
 
+    # Per-term variant sets for the SCN1A hierarchy diagram: which variants each of its
+    # disease terms claims, so the overlap between them can be drawn rather than asserted.
+    scn1a_sets: dict = {}
+    for (_gene_sym, gene_id, mondo_id), varids in pair_variant_ids[0].items():
+        if gene_id == "NCBIGene:6323":
+            scn1a_sets.setdefault(mondo_id, set()).update(varids)
+
     return (
         counts,
         pairs_ge3,
@@ -1676,6 +2071,7 @@ def compute_star_data(clinvar_tsv: Path, var_records: dict, map_to_mondo: dict, 
         pairs_remaining,
         pair_submitters,
         pair_sets[0],
+        scn1a_sets,
     )
 
 
@@ -1984,7 +2380,8 @@ def support_bucket(n: int) -> str:
 
 
 def build_monarch_comparison(
-    pairs_ge3: list, pairs_2star: list, pairs_remaining: list, monarch: dict
+    pairs_ge3: list, pairs_2star: list, pairs_remaining: list, monarch: dict,
+    pair_submitters: dict | None = None,
 ) -> dict:
     """Reconcile ClinVar's implied gene-disease pairs against the Monarch KG's
     curated ones.
@@ -1998,10 +2395,17 @@ def build_monarch_comparison(
     ClinVar implies that no curator has asserted.
 
     Matching is on exact (NCBIGene id, MONDO id). Because MONDO carries several
-    co-existing terms for overlapping entities (see the SCN1A worked example),
-    exact matching understates agreement, so ClinVar-only pairs are additionally
-    checked for an *ancestor-aware* match: does Monarch associate the same gene
-    with an ancestor or descendant of ClinVar's disease term?
+    co-existing terms over one clinical area (see the SCN1A worked example),
+    ClinVar-only pairs are additionally checked for an *ancestor-aware* match:
+    does Monarch associate the same gene with an ancestor or descendant of
+    ClinVar's disease term?
+
+    That check produces a *candidate* list, not a duplicate count, and the
+    difference matters. Hierarchical proximity means two terms are clinically
+    related; it does not make them redundant. In the SCN1A example both nearby
+    pairs turn out to be distinctions MONDO maintains deliberately -- one at
+    ClinGen's explicit request -- so this column must never be used to collapse
+    rows automatically.
     """
     clinvar: dict = {}
     for tier, rows in ((1, pairs_ge3), (2, pairs_2star), (3, pairs_remaining)):
@@ -2137,6 +2541,12 @@ def build_monarch_comparison(
     # SCN1A worked example -- computed live rather than hardcoded, so the numbers in the
     # narrative can never drift from the data the rest of the section is built from.
     SCN1A_GENE = "NCBIGene:6323"
+    # the single lab behind a term, where there is only one -- used to label the diagram
+    scn1a_leads = {}
+    for (gene_sym, gene_id, mondo_id), entry in pair_submitters.items():
+        if gene_id == SCN1A_GENE and len(entry["submitters"]) == 1:
+            scn1a_leads[mondo_id] = next(iter(entry["submitters"]))
+
     scn1a_rows = sorted(
         (
             {
@@ -2205,6 +2615,7 @@ def build_monarch_comparison(
         "kinship_counts": kinship_counts,
         "mondo_status_counts": mondo_status_counts,
         "scn1a_rows": scn1a_rows,
+        "scn1a_leads": scn1a_leads,
         "supported_rows": sorted(supported_rows, key=lambda r: -r["n_submitters"]),
         "only_rows": sorted(only_rows, key=lambda r: -r["n_submitters"]),
         "monarch_only_rows": sorted(monarch_only_rows, key=lambda r: (r["gene"], r["mondo"])),
@@ -3271,6 +3682,7 @@ def render_html(
     phenotype_profile: dict,
     evidence_tiers: dict,
     emitted: dict,
+    scn1a_subgraph: dict,
 ) -> str:
     max_variants = max(r["variants"] for r in results.values()) or 1
     max_pairs = max(r["gene_disease_pairs"] for r in results.values()) or 1
@@ -3465,6 +3877,9 @@ def render_html(
     )
 
     mc = monarch_comparison
+    scn1a_diagram = diagram_scn1a_hierarchy(scn1a_subgraph)
+    _sh = scn1a_subgraph.get("shares", {}) if scn1a_subgraph else {}
+    shared_headline = f"{max(_sh.values()):,}" if _sh else "the"
 
     # Headline figures come from the emitted artifacts, never from prose
     em = emitted
@@ -4186,6 +4601,11 @@ def render_html(
     reconcilable = mc["kinship_counts"]["ancestor in Monarch"] + mc["kinship_counts"]["descendant in Monarch"]
     reconcilable_pct = 100 * reconcilable / kinship_total
 
+    # the collision recommendation 2 leads with, rendered from the live scan
+    sssom_dravet_html = ", ".join(
+        f"<code>{m}</code>" for m in mc["sssom"]["dravet"]
+    ) or "no collision found in this release"
+
     deprecated_rows_html = "".join(
         f"<tr><td>{r['gene']}</td><td class='mono'>{r['mondo']}</td><td>{r['disease_name']}</td>"
         f"<td class='num'>{r['n_variants']:,}</td><td class='num'>{r['n_submitters']:,}</td></tr>"
@@ -4291,15 +4711,22 @@ def render_html(
 </p>
 {monarch_only_table}
 
-<h3>Are these really novel, or the same relationship at a different level?</h3>
+<h3>Are these really novel, or does Monarch already link the gene to a nearby term?</h3>
 <p class="subtitle">
-  MONDO carries multiple co-existing terms for overlapping entities, so an exact-id mismatch does not
+  MONDO carries multiple co-existing terms over one clinical area, so an exact-id mismatch does not
   mean Monarch is silent about that gene. Each ClinVar-only pair is classified below by whether Monarch
   associates the <em>same gene</em> with a term that is an ancestor or a descendant of ClinVar's term.
-  <strong>{reconcilable:,} ({reconcilable_pct:.1f}%) are the same relationship recorded at a different
-  level of the MONDO hierarchy</strong> rather than genuinely new biology &mdash; the fragmentation the
-  SCN1A example below makes concrete.
+  <strong>{reconcilable:,} ({reconcilable_pct:.1f}%) sit at a different level of the MONDO hierarchy
+  from a term Monarch already links to that gene.</strong>
 </p>
+<div class="summary-box" style="border-left:4px solid #b91c1c;">
+  <strong>&#9888; Read this as a candidate list, not a duplicate count.</strong> Hierarchical proximity
+  means two terms are <em>related</em>; it does not mean they are the same disease. The SCN1A example
+  below works through two pairs that look identical in this table &mdash; both nearby in the hierarchy,
+  both splitting one gene's evidence &mdash; and MONDO holds <em>both</em> apart on purpose, one of them
+  at the explicit request of ClinGen's Epilepsy Gene Curation Expert Panel. Collapsing rows on the
+  strength of this column alone would destroy deliberate expert distinctions.
+</div>
 <div class="table-wrap">
 <table><thead><tr><th>Relationship to Monarch's terms for the same gene</th><th># pairs</th><th>%</th></tr></thead>
 <tbody>{kinship_rows}</tbody></table>
@@ -4343,8 +4770,9 @@ def render_html(
 <h3>Table B &mdash; in ClinVar only ({mc['n_clinvar_only']:,} pairs)</h3>
 <p class="subtitle">
   Pairs ClinVar implies with no matching Monarch gene-disease edge, sorted by pooled submitter count.
-  "Kinship" is the hierarchy classification above &mdash; rows reading "ancestor"/"descendant" are
-  reconcilable with an existing Monarch association; "gene absent from Monarch" rows are the uncurated
+  "Kinship" is the hierarchy classification above &mdash; rows reading "ancestor"/"descendant" name a
+  gene Monarch already associates with a hierarchically related term, which makes them worth a curator's
+  eye rather than automatically redundant; "gene absent from Monarch" rows are the uncurated
   ones. All {mc['n_clinvar_only']:,} rows are loaded &mdash; search matches gene, MONDO id, disease
   name and kinship. Every gene here is one ClinVar actually asserts for the contributing variants;
   antisense transcripts, readthrough fusions and overlapping loci are gone (see section {S.ingest_recommendation}).
@@ -4419,21 +4847,79 @@ def render_html(
 <h3>Worked example: SCN1A, and why the terms don't line up</h3>
 <div class="summary-box">
   <p style="margin-top:0;">
-    SCN1A is the clearest case of the fragmentation counted above. ClinVar's variant evidence and
-    Monarch's curated associations both concern the same gene and the same clinical territory
-    &mdash; developmental and epileptic encephalopathy &mdash; but they land on
-    <strong>different MONDO terms that are siblings, not synonyms</strong>:
+    SCN1A is the clearest illustration of why the count above is a candidate list rather than a
+    duplicate count. ClinVar's variant evidence and Monarch's curated associations both concern the
+    same gene and the same clinical territory &mdash; developmental and epileptic encephalopathy
+    &mdash; but they land on <strong>different, deliberately distinct MONDO terms</strong>:
   </p>
   <div class="table-wrap">
   {scn1a_rows_html}
   </div>
+  <div class="controls" style="margin-top:0.75rem;">
+    <label style="font-size:12.5px; color:#334155; display:inline-flex; align-items:center; gap:6px;">
+      <input id="scn1a-toggle-shares" type="checkbox" checked> shared-variant connectors
+    </label>
+    <label style="font-size:12.5px; color:#334155; display:inline-flex; align-items:center; gap:6px;">
+      <input id="scn1a-toggle-xrefs" type="checkbox"> OMIM / Orphanet ids
+    </label>
+  </div>
+  <div style="margin:0.5rem 0 1rem;">{scn1a_diagram}</div>
+  <p class="subtitle" style="font-size:12.5px;">
+    <strong>Which source vocabulary a term carries decides which node a lab lands on.</strong>
+    Three separate MONDO terms each hold a <code>skos:exactMatch</code> to a source term named
+    "Dravet syndrome": <code>OMIM:607208</code> resolves to <code>MONDO:0100079</code> (DEE 6A),
+    while <code>DOID:0080422</code>, <code>ICD10CM:G40.83</code>, <code>UMLS:C0751122</code> and
+    <code>MEDGEN:148243</code> all resolve to <code>MONDO:0100135</code> (Dravet syndrome), and
+    <code>Orphanet:33069</code> resolves to <code>MONDO:0011794</code>, which is obsolete.
+    Transitivity of <code>exactMatch</code> would say those should be one node. The counts show what
+    that costs: <strong>6 variants sit on the OMIM-linked term and 590 on the MedGen-linked one</strong>.
+    <br><br>
+    <strong>None of that is an accident. MONDO decided it deliberately, and the decision is on the
+    record in <a href="https://github.com/monarch-initiative/mondo/issues/745" target="_blank"
+    rel="noopener">mondo#745</a>.</strong> ClinGen's Epilepsy Gene Curation Expert Panel asked for
+    the split, and gave the reason: <em>"Dravet syndrome is a clinical diagnosis &mdash; most
+    individuals do indeed have variants in SCN1A, but not all, which is one of the reasons why we do
+    not want it exclusively tied to SCN1A, as is implied by using the term EIEE6."</em> MONDO agreed
+    and split the class. <code>MONDO:0100079</code> now carries the note that <em>"in Mondo, DEE6A is
+    treated as a distinct class from Dravet syndrome (contrary to OMIM), as not every case of Dravet
+    syndrome is caused by a variation in SCN1A"</em>. The axis is <strong>clinical syndrome (Dravet)
+    versus SCN1A-caused entity (DEE 6A)</strong> &mdash; not two names for one thing. The same ticket
+    also removed DEE 4 (<em>STXBP1</em>) and DEE 19 (<em>GABRA1</em>) from underneath Dravet.
+    <br><br>
+    <strong>And the OMIM mapping is deliberate too.</strong> It is tempting to read
+    <code>OMIM:607208</code> &mdash; whose title includes "DRAVET SYNDROME" &mdash; landing on DEE 6A
+    as a mapping bug. It is the opposite: MONDO's lead curator ruled in that thread that
+    <em>"OMIM:607208 should be equivalent to MONDO:0100079 (EIEE6), not to MONDO:0011794"</em>, and
+    the change was made. EIEE6 was kept as a <em>related</em>, explicitly not exact, synonym of Dravet.
+    So the collision this ingest detects is not an error to repair &mdash; it is two vocabularies
+    drawing the boundary in different places, on purpose. <em>Orphanet</em> is the one still out of
+    step: it treats the two as equivalent, which is why <code>Orphanet:33069</code> lands on the
+    obsolete <code>MONDO:0011794</code>, and the thread records an unresolved request to sync.
+    <br><br>
+    <strong><code>MONDO:0800491</code> is a separate distinction, on different grounds.</strong> That
+    term is early-infantile DEE &mdash; onset &le;3 months, abnormal interictal EEG &mdash; and it
+    merges <em>two</em> Orphanet concepts (<code>Orphanet:1934</code> and <code>1935</code>). MONDO's
+    own definition puts Dravet's onset in the first year, typically 4&ndash;5 months; the Dravet
+    Syndrome European Federation put a mean of 5.2 months on the record in the same thread. The
+    {shared_headline} variants the two terms share are SCN1A's phenotypic spectrum, not duplicate
+    terminology.
+    <br><br>
+    <strong>So neither pair should be merged, and rolling evidence up a shared ancestor is the wrong
+    fix in both cases.</strong> Two terms being hierarchically close is not evidence that they are
+    redundant &mdash; here it is the residue of curators drawing a line carefully, at a domain expert
+    panel's request. What MONDO does offer is guidance on which side to land on: the DEE 6A note
+    recommends <em>"describing the phenotype, ie Dravet syndrome, or the genetic etiology, ie
+    SCN1A"</em>, which points this ingest at <code>MONDO:0100135</code> plus the gene edge it already
+    emits.
+  </p>
   <p>
     <strong>The hierarchy explains it.</strong> <code>MONDO:0800491</code> (early-infantile DEE) and
     <code>MONDO:0100135</code> (Dravet syndrome) are <em>siblings</em> &mdash; both are direct children of
     <code>MONDO:0800490</code> (neonatal/infantile-onset epilepsy syndrome with DEE), and both descend from
     <code>MONDO:0100620</code> (developmental and epileptic encephalopathy). Neither is an ancestor of the
-    other, so no amount of exact-id matching will ever unify them; reconciling them requires walking up to
-    a shared parent.
+    other, so no amount of exact-id matching will ever unify them &mdash; and per the note above, they
+    should not be unified. The hierarchy explains why the evidence splits; it does not license repairing
+    the split by merging.
   </p>
   <p>
     <strong>Why ClinVar lands where it does.</strong> The term a variant gets is decided entirely by which
@@ -4441,10 +4927,11 @@ def render_html(
     <code>C0393706:Early-infantile DEE</code> &rarr; <code>MONDO:0800491</code>, and is the <em>only</em>
     lab that does &mdash; hence a pooled submitter count of 1 across all its variants. The other ~87 labs use
     <code>C0751122:Severe myoclonic epilepsy in infancy</code> (the former name for Dravet syndrome)
-    &rarr; <code>MONDO:0100135</code>. One clinical entity, two vocabularies, two MONDO terms, and neither
-    side can corroborate the other. Rolled up to their common ancestor <code>MONDO:0100620</code>, SCN1A's
-    DEE evidence is overwhelming and multi-lab &mdash; fragmented into six pieces, two of which are dropped
-    entirely.
+    &rarr; <code>MONDO:0100135</code>. One gene's clinical spectrum, two vocabularies, two MONDO terms,
+    and neither side can corroborate the other. The tempting move is to pool them at
+    <code>MONDO:0100620</code>, where SCN1A's DEE evidence becomes overwhelming and multi-lab &mdash; but
+    that pools terms MONDO separates on clinical grounds. The measurable problem is real; the rollup is
+    not the remedy (see recommendation 2 in section {S.ingest_recommendation}).
   </p>
   <p>
     <strong>Monarch's side has the mirror-image problem.</strong> Its 13 SCN1A associations come from three
@@ -4549,19 +5036,52 @@ def render_html(
   <code>compute_star_data()</code> already does) and the admit/reject decision applied in the transform.
 </p>
 
-<h3>Recommendation 2 &mdash; test concordance over the MONDO hierarchy, not exact ids</h3>
+<h3>Recommendation 2 &mdash; report term collisions for curation; do not roll evidence up the hierarchy</h3>
 <p class="subtitle">
   <code>concordance_groups()</code> keys agreement on <code>(mondo_id, ClinicalSignificance)</code>, so
-  two labs describing the same condition under synonymous MONDO terms never corroborate each other.
-  Section 8 measured the cost: <strong>{reconcilable:,} of {kinship_total:,}
-  ({reconcilable_pct:.1f}%)</strong> ClinVar-only pairs are the same relationship Monarch already
-  asserts, recorded at a different level of the hierarchy. SCN1A is the worked example &mdash;
-  <code>MONDO:0800491</code> and <code>MONDO:0100135</code> are siblings, so no exact-id rule can ever
-  unify them. <strong>Count support at a rolled-up ancestor, but keep emitting the specific term</strong>,
-  so granularity in the KG is preserved while the evidence stops fragmenting. A secondary fix in the same
-  area: agreement also requires the <em>exact same</em> <code>ClinicalSignificance</code> string, so
-  <em>Pathogenic</em> + <em>Likely pathogenic</em> on the same variant and disease does not currently
-  count &mdash; grouping by the P/LP family (which <code>predicate_map</code> already defines) would.
+  two labs describing one gene's disease under two MONDO terms never corroborate each other. Section
+  {S.monarch_kg} measured the scale: <strong>{reconcilable:,} of {kinship_total:,}
+  ({reconcilable_pct:.1f}%)</strong> ClinVar-only pairs involve a gene Monarch already links to a
+  hierarchically related term. The obvious fix is to count support over the MONDO ancestor closure.
+  <strong>That fix is wrong, and SCN1A is the reason.</strong>
+</p>
+<div class="summary-box" style="border-left:4px solid #b91c1c;">
+  <strong>&#9888; The terms that fragment SCN1A's evidence are separated deliberately, at a domain
+  expert panel's request.</strong>
+  <a href="https://github.com/monarch-initiative/mondo/issues/745" target="_blank"
+  rel="noopener">mondo#745</a> records ClinGen's Epilepsy Gene Curation Expert Panel asking MONDO to
+  split Dravet syndrome from DEE 6A, because <em>"Dravet syndrome is a clinical diagnosis &mdash; most
+  individuals do indeed have variants in SCN1A, but not all"</em>. MONDO agreed and split the class;
+  <code>MONDO:0100079</code> still carries the note. <code>MONDO:0800491</code> (early-infantile DEE,
+  onset &le;3 months) is separately distinct from Dravet on onset. Pooling at
+  <code>MONDO:0100620</code> would silently undo both decisions and make the resulting evidence counts
+  look <em>better</em> while meaning less.
+</div>
+<p class="subtitle">
+  <strong>Emit the collisions instead.</strong> Scan <code>mondo.sssom.tsv</code> for source labels
+  claimed by more than one MONDO class and publish the list as a QC artifact for curation. This ingest
+  already reads that file, so the cost is one pass, and it finds
+  <strong>{mc['sssom']['n_collisions']:,} colliding labels</strong> out of {mc['sssom']['n_labels']:,}.
+  "dravet syndrome" is one of them, surfaced without being looked for: {sssom_dravet_html}.
+  <br><br>
+  <strong>Flag, never auto-merge &mdash; and do not assume a collision is a bug.</strong> The SCN1A
+  collision is the cautionary case. <code>OMIM:607208</code> is titled "Dravet syndrome" and
+  <code>skos:exactMatch</code>es <code>MONDO:0100079</code>, which reads like an obvious mapping error
+  &mdash; but MONDO's lead curator ruled in that same thread that <em>"OMIM:607208 should be equivalent
+  to MONDO:0100079 (EIEE6), not to MONDO:0011794"</em>. The mapping is intentional; the two
+  vocabularies simply draw the boundary in different places. Merging on <code>exactMatch</code> closure
+  would therefore have collapsed a distinction MONDO and ClinGen built on purpose.
+  <br><br>
+  The mappings cannot support more than flagging in any case: {mc['sssom']['exact_pct']:.1f}% of the
+  {mc['sssom']['total']:,} are <code>skos:exactMatch</code> and
+  <strong>{mc['sssom']['unspecified_pct']:.0f}% carry <code>semapv:UnspecifiedMatching</code></strong>,
+  so no mapping records how it was made and there is no provenance to adjudicate a collision with. A
+  human reading the ticket is what resolved this one.
+  <br><br>
+  A smaller, independent fix in the same function: concordance also requires the <em>exact same</em>
+  <code>ClinicalSignificance</code> string, so <em>Pathogenic</em> + <em>Likely pathogenic</em> on one
+  variant and disease do not currently corroborate each other. Grouping by the P/LP family, which
+  <code>predicate_map</code> already defines, would fix that on its own.
 </p>
 
 <h3>Gene attribution</h3>
@@ -5339,9 +5859,10 @@ def render_html(
   submit MedGen <code>C0751122:Severe myoclonic epilepsy in infancy</code>, which maps to a
   <em>different</em> MONDO id &mdash; <code>MONDO:0100135</code> (Dravet syndrome), sitting in tier 1
   on just 4 variants. Because concordance is keyed on <code>(mondo_id, ClinicalSignificance)</code>,
-  submitter agreement expressed through synonymous condition names is invisible to it: one clinical
-  entity splits across two terms and neither side can corroborate the other. That variant count
-  measures one lab's submission volume, not corroboration. Two further leaks compound this: agreement also
+  submitter agreement expressed through a different condition name is invisible to it: one gene's
+  clinical spectrum splits across two terms and neither side can corroborate the other. That variant
+  count measures one lab's submission volume, not corroboration. (Those two terms are genuinely
+  distinct diseases in MONDO, so the fix is not to merge them &mdash; see section {S.monarch_kg}.) Two further leaks compound this: agreement also
   requires the <em>exact same</em> <code>ClinicalSignificance</code> string, so
   <em>Pathogenic</em> + <em>Likely pathogenic</em> on the same variant and disease does not count;
   and high-volume labs frequently submit the placeholder <code>C3661900:not provided</code>
@@ -5791,6 +6312,21 @@ function setupPairsTable(config) {{
   }});
 }})();
 
+
+(function() {{
+  function bind(id, target) {{
+    var cb = document.getElementById(id);
+    if (!cb) return;
+    cb.addEventListener("change", function() {{
+      (target || []).forEach(function(g) {{
+        var el = document.getElementById(g);
+        if (el) el.style.display = cb.checked ? "" : "none";
+      }});
+    }});
+  }}
+  bind("scn1a-toggle-shares", ["scn1a-shares", "scn1a-shares-labels"]);
+  bind("scn1a-toggle-xrefs", ["scn1a-xrefs"]);
+}})();
 
 (function() {{
   var cube = {filter_cube_json};
@@ -6312,6 +6848,7 @@ def main():
         pairs_remaining,
         pair_submitters,
         snv_pair_set,
+        scn1a_sets,
     ) = compute_star_data(clinvar_tsv, var_records, map_to_mondo, mondo_labels, variant_genes)
     print(
         f"\nGene-disease pair tiers: {len(pairs_ge3):,} >=3-star, "
@@ -6332,7 +6869,14 @@ def main():
     print(f"Pairs with ClinGen as the only submitter(s) at all: {clingen_summary['clingen_only_pairs']:,}")
 
     monarch = load_monarch_gene_disease(args.data_dir)
-    monarch_comparison = build_monarch_comparison(pairs_ge3, pairs_2star_concordance, pairs_remaining, monarch)
+    monarch_comparison = build_monarch_comparison(
+        pairs_ge3, pairs_2star_concordance, pairs_remaining, monarch, pair_submitters
+    )
+    monarch_comparison["sssom"] = sssom_label_collisions(args.data_dir)
+    print(
+        f"  SSSOM label collisions: {monarch_comparison['sssom']['n_collisions']:,} of "
+        f"{monarch_comparison['sssom']['n_labels']:,} source labels claimed by >1 MONDO class"
+    )
     print(
         f"\nMonarch KG reconciliation: {monarch_comparison['n_monarch']:,} curated gene-disease pairs, "
         f"{monarch_comparison['n_clinvar']:,} ClinVar-derived pairs"
@@ -6356,6 +6900,7 @@ def main():
     )
 
     # the report runs from analysis/, so the KGX artifacts sit alongside data/
+    scn1a_subgraph = load_scn1a_subgraph(args.data_dir)
     emitted = load_emitted_summary(args.data_dir.parent / "output")
     if emitted["available"]:
         print(f"Emitted artifacts: {emitted['nodes']:,} nodes, {emitted['edges']:,} edges")
@@ -6492,6 +7037,7 @@ def main():
             phenotype_profile,
             evidence_tiers,
             emitted,
+            scn1a_subgraph,
         )
     )
     print(f"\nWrote {args.output}")

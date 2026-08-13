@@ -256,9 +256,18 @@ Current release: 116,739 nodes; 116,467 gene edges; 183,167 `causes` and 21,996
    when some single variant clears the bar alone; pooled evidence across variants never counts.
    Path C partly sidesteps this by using ClinVar's own cross-submitter aggregate, but only within
    a variant — never across a gene-disease pair's variants.
-2. **Disease terms are matched by exact MONDO id.** MONDO carries co-existing terms for
-   overlapping entities, so labs describing the same condition under synonymous terms cannot
-   corroborate each other.
+2. **Disease terms are matched by exact MONDO id.** MONDO carries co-existing terms over one
+   clinical area, so labs describing one gene's disease under different terms cannot corroborate
+   each other. Note that the remedy is *not* to pool evidence over the MONDO ancestor closure:
+   in the SCN1A case that splits the evidence most visibly, the terms involved
+   (`MONDO:0100079`, `MONDO:0800491`, `MONDO:0100135`) are separated deliberately — the DEE 6A /
+   Dravet split at the request of ClinGen's Epilepsy Gene Curation Expert Panel, on the grounds
+   that Dravet is a clinical diagnosis and not every case is SCN1A-caused ([mondo#745][m745]).
+   Reporting `mondo.sssom.tsv` label collisions for curation is the safe version — but note that
+   a collision is not proof of an error: in this very case MONDO deliberately mapped
+   `OMIM:607208` ("Dravet syndrome") to `MONDO:0100079` (DEE 6A).
+
+[m745]: https://github.com/monarch-initiative/mondo/issues/745
 3. **~28% of submission records are invisible** because their phenotype is `not provided`
    (stage 3), which biases every submitter count downward — worst for the highest-volume labs.
 4. **Deprecated MONDO terms are not filtered**; the mapping files still point at some obsoleted ids.
