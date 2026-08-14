@@ -74,6 +74,9 @@ def load_side(out_dir: Path, entrez_to_hgnc: dict | None = None) -> dict:
             elif row["object"].startswith("MONDO:"):
                 var_dis[row["subject"]].add(row["object"])
 
+    # The gene-disease pairs this branch IMPLIES. Neither branch emits a gene-disease
+    # edge directly -- the relationship is the cross product of (variant->gene) and
+    # (variant->disease) per variant, which is also how the KG comparison reads it.
     pairs = {
         (g, d)
         for v, ds in var_dis.items()
@@ -121,6 +124,8 @@ def load_kg_pairs(data_dir: Path) -> tuple[set, int, int]:
             if gene:
                 pairs.add((gene, p[1]))
 
+    # Raw line counts, minus the header, purely to size the ingest's contribution
+    # against the graph it joins.
     with open(data_dir / "monarch-kg_nodes.tsv") as fh:
         n_nodes = sum(1 for _ in fh) - 1
     with open(data_dir / "monarch-kg_edges.tsv") as fh:
@@ -136,12 +141,17 @@ def describe_dropped(dropped: set, base: dict, head: dict, symbols: dict) -> lis
     entirely is one ClinVar never asserts as causal; a gene still present has simply
     lost one disease, which is a different (and more reviewable) claim.
     """
+    # "absent" means the head branch attributes this gene to no variant at all, which is
+    # a much stronger statement than losing one disease pairing -- it says ClinVar never
+    # asserts the gene as causal. The two groups need different scrutiny, so split first.
     genes = {g for g, _ in dropped}
     absent = sorted(g for g in genes if g not in head["genes"])
     present = sorted(g for g in genes if g in head["genes"])
     named = sorted(symbols[g] for g in absent if g in symbols)
     unnamed = [g for g in absent if g not in symbols]
 
+    # Descriptive only -- these buckets label the dropped genes for a reader, and no
+    # filtering anywhere in the ingest depends on them.
     def bucket(sym: str) -> str:
         if ANTISENSE_RE.search(sym):
             return "antisense/divergent transcript"

@@ -2384,6 +2384,9 @@ def build_term_collisions(output_dir: Path, monarch: dict, data_dir: Path) -> di
     if not edges_path.exists():
         return {"available": False}
 
+    # Read the ingest's own emitted edges rather than recomputing from source, so this
+    # section describes what actually ships. One gene per variant here (unlike the
+    # GENEINFO era), so a plain dict is right.
     var_dis: dict = {}
     var_gene: dict = {}
     with open(edges_path, newline="") as fh:
@@ -2421,6 +2424,8 @@ def build_term_collisions(output_dir: Path, monarch: dict, data_dir: Path) -> di
     labels = monarch["labels"]
     sym = monarch["gene_symbol"]
 
+    # MONDO is a DAG with heavy fan-in near the top, so the same ancestors get walked
+    # thousands of times across ~11k candidate pairs. Memoise per term.
     anc_cache: dict = {}
 
     def ancestors(m):
@@ -2439,6 +2444,9 @@ def build_term_collisions(output_dir: Path, monarch: dict, data_dir: Path) -> di
         anc_cache[m] = dist
         return dist
 
+    # The co-occurrence pass: term_vars is each MONDO term's variant set, and `shared`
+    # counts, for every unordered term pair, how many variants were reported to BOTH.
+    # Only variants carrying >1 disease can contribute, so most rows cost nothing.
     term_vars: dict = {}
     shared: Counter = Counter()
     for v, ds in var_dis.items():
@@ -2470,6 +2478,8 @@ def build_term_collisions(output_dir: Path, monarch: dict, data_dir: Path) -> di
         kinds[kind] += 1
         if kind in ("synonym-candidate", "descendant"):
             continue
+        # Which gene's variants are being split. Counted over the shared set rather than
+        # either term's full set, so the answer describes the collision itself.
         genes = Counter(var_gene.get(v) for v in (term_vars[a] & term_vars[b]))
         genes.pop(None, None)
         top_gene = genes.most_common(1)[0][0] if genes else ""
@@ -2485,6 +2495,9 @@ def build_term_collisions(output_dir: Path, monarch: dict, data_dir: Path) -> di
 
     # the interesting unit is the cluster, not the pair: one gene's variants can
     # scatter over a dozen terms
+    # Roll pairs up per gene. A pair is the unit the table lists, but the unit that
+    # actually shows the scale is the cluster: GJB2's variants scatter over eleven
+    # connexin-26 syndromes, which reads as 45 pairs and understates the fragmentation.
     per_gene: dict = {}
     for r in rows:
         g = per_gene.setdefault(r["gene"], {"gene": r["gene"], "terms": set(),
@@ -2498,6 +2511,8 @@ def build_term_collisions(output_dir: Path, monarch: dict, data_dir: Path) -> di
         key=lambda g: (-g["n_terms"], -g["max_shared"]),
     )
 
+    # Where SCN1A actually ranks, so the report can state it rather than imply it. The
+    # section's claim is that SCN1A is a mild example, and this is the number backing it.
     scn1a = [r for r in rows if r["gene"] == "SCN1A"]
     worse = sum(1 for r in rows if r["jaccard"] > (scn1a[0]["jaccard"] if scn1a else 1))
     return {
@@ -4803,7 +4818,8 @@ def render_html(
     reconcilable = mc["kinship_counts"]["ancestor in Monarch"] + mc["kinship_counts"]["descendant in Monarch"]
     reconcilable_pct = 100 * reconcilable / kinship_total
 
-    # the collision recommendation 2 leads with, rendered from the live scan
+    # The one collision recommendation 2 names explicitly, rendered from the live scan so
+    # the example cannot drift from the count beside it.
     sssom_dravet_html = ", ".join(
         f"<code>{m}</code>" for m in mc["sssom"]["dravet"]
     ) or "no collision found in this release"
@@ -5164,6 +5180,8 @@ def render_html(
 """
 
     # --- SCN1A generalised: every term pair sharing a variant set ------------
+    # Section {S.term_collisions}. Degrades to a pointer rather than failing when the
+    # transform has not been run, since the whole section is derived from output/.
     tc = term_collisions
     if not tc.get("available"):
         collisions_html = (
@@ -5174,6 +5192,8 @@ def render_html(
         collision_rows_json = "[]"
         collision_cluster_rows = ""
     else:
+        # Every pair goes to the client for the searchable table; only the widest
+        # clusters are rendered server-side, since that table is for orientation.
         collision_rows_json = json.dumps(tc["rows"])
         collision_cluster_rows = "".join(
             f"<tr><td>{c['gene']}</td><td class='num'>{c['n_terms']}</td>"
@@ -7236,6 +7256,8 @@ def main():
     monarch_comparison = build_monarch_comparison(
         pairs_ge3, pairs_2star_concordance, pairs_remaining, monarch, pair_submitters
     )
+    # Attached after the fact rather than computed inside build_monarch_comparison(),
+    # which has no data_dir and no reason to gain one.
     monarch_comparison["sssom"] = sssom_label_collisions(args.data_dir)
     print(
         f"  SSSOM label collisions: {monarch_comparison['sssom']['n_collisions']:,} of "
@@ -7265,6 +7287,8 @@ def main():
 
     # the report runs from analysis/, so the KGX artifacts sit alongside data/
     scn1a_subgraph = load_scn1a_subgraph(args.data_dir)
+    # Needs `monarch` for MONDO labels and the subclass graph, and reads the emitted
+    # edges from output/ -- so it has to run after both are available.
     term_collisions = build_term_collisions(
         args.data_dir.parent / "output", monarch, args.data_dir
     )

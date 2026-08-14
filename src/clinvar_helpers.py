@@ -65,8 +65,9 @@ KEPT_VARIANT_CLASSES = frozenset(
 # Predicate by evidence strength, not by ClinicalSignificance. Every Pathogenic-family
 # classification asserts causation; what differs is how well corroborated it is.
 #   >=aggregate_star_min (ClinVar's own cross-submitter aggregate)  -> causes
-#   <=1 star, but derived from published evidence                   -> associated_with
-# A 1-star call with no published basis is not emitted at all.
+#   exactly 1 star, but derived from published evidence             -> associated_with
+# A 1-star call with no published basis is not emitted at all, and 0 stars is excluded
+# outright by min_review_stars below -- so "<=publication_star_max" means exactly 1.
 #
 # "Published evidence" means the submitting lab recorded CollectionMethod == "literature
 # only" on its Pathogenic/Likely-pathogenic record -- i.e. the classification itself came
@@ -251,6 +252,10 @@ def make_variant_gene_map(variant_summary_path, assembly_preference=ASSEMBLY_PRE
             best_rank[varid] = rank
             gene_id = cols[hcols["GeneID"]]
             hgnc_id = cols[hcols["HGNC_ID"]].strip()
+            # Both must be present. GeneID == -1 is ClinVar declining to attribute the
+            # variant at all; a blank or "-" HGNC_ID means the gene it attributes has no
+            # HGNC record (mostly LOC placeholders and non-coding loci), and an id the KG
+            # cannot resolve is worse than no edge -- it dangles silently.
             if gene_id == "-1" or not gene_id or not hgnc_id or hgnc_id == "-":
                 # the preferred build declines to attribute a gene -- drop any attribution
                 # picked up from a lower-preference build rather than letting it stand
@@ -260,6 +265,9 @@ def make_variant_gene_map(variant_summary_path, assembly_preference=ASSEMBLY_PRE
             # gene symbols repeat across millions of rows -- intern them so the map
             # holds one string per gene rather than one per variant
             symbol = symbol_pool.setdefault(symbol, symbol)
+            # HGNC ids repeat as often as symbols do (one per gene across millions of
+            # rows), so intern them through the same pool rather than holding ~4.5M
+            # separate equal strings.
             hgnc_id = symbol_pool.setdefault(hgnc_id, hgnc_id)
             gene_map[varid] = (hgnc_id, symbol)
     return gene_map
