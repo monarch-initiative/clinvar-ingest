@@ -75,6 +75,21 @@ KEPT_VARIANT_CLASSES = frozenset(
 # cohort papers cite thousands at once and a citation asserts nothing about pathogenicity.
 # This signal is attached to the assertion rather than the variant, and needs no extra file.
 publication_star_max = 1
+
+# Hard floor: nothing with a 0-star review status enters the graph, by any path.
+#
+# 0 stars is not "weak evidence", it is the absence of an assertion: the aggregate values
+# scored 0 in review_star_map are no_assertion_criteria_provided, no_classification_provided,
+# no_classifications_from_unflagged_records, no_classification_for_the_single_variant and
+# flagged_submission. A classification with no stated criteria cannot be weighed, and a
+# published basis does not repair that -- so the publication tier does not get to admit it
+# either, and neither does the multi-submitter concordance rescue (several submitters
+# agreeing without criteria is still nobody stating criteria).
+#
+# Applied on BOTH star axes, which are different measurements:
+#   row["CLNREVSTAT"]     ClinVar's aggregate ACROSS a variant's submitters (0-4)
+#   rec["ReviewStatus"]   one submission record's own status (0, 1, 3 or 4 -- never 2)
+min_review_stars = 1
 LITERATURE_ONLY = "literature only"
 
 # A gene-disease pair must be supported by at least this many distinct variants. Inclusion
@@ -201,6 +216,14 @@ def make_variant_gene_map(variant_summary_path, assembly_preference=ASSEMBLY_PRE
     variant still contributes its disease edges. The same applies
     across builds: if the preferred build's row says -1, that is ClinVar's
     answer and a lower-preference build is not consulted to override it.
+
+    The emitted id is the HGNC id, not NCBIGene, because that is the id space the
+    Monarch KG keys HUMAN genes on. Its NCBIGene nodes are other species (dog, rat,
+    ...), so NCBIGene-subjected VariantToGeneAssociation edges resolve to nothing on
+    merge -- they dangle rather than error, which is why this went unnoticed. A row
+    with no HGNC_ID is treated exactly like GeneID == -1: no gene edge, disease edges
+    unaffected. variant_summary.txt.gz carries HGNC_ID alongside GeneID, so this costs
+    no extra input.
     """
     gene_map = {}
     best_rank = {}
@@ -227,7 +250,8 @@ def make_variant_gene_map(variant_summary_path, assembly_preference=ASSEMBLY_PRE
                 continue
             best_rank[varid] = rank
             gene_id = cols[hcols["GeneID"]]
-            if gene_id == "-1" or not gene_id:
+            hgnc_id = cols[hcols["HGNC_ID"]].strip()
+            if gene_id == "-1" or not gene_id or not hgnc_id or hgnc_id == "-":
                 # the preferred build declines to attribute a gene -- drop any attribution
                 # picked up from a lower-preference build rather than letting it stand
                 gene_map.pop(varid, None)
@@ -236,7 +260,8 @@ def make_variant_gene_map(variant_summary_path, assembly_preference=ASSEMBLY_PRE
             # gene symbols repeat across millions of rows -- intern them so the map
             # holds one string per gene rather than one per variant
             symbol = symbol_pool.setdefault(symbol, symbol)
-            gene_map[varid] = ("NCBIGene:{}".format(gene_id), symbol)
+            hgnc_id = symbol_pool.setdefault(hgnc_id, hgnc_id)
+            gene_map[varid] = (hgnc_id, symbol)
     return gene_map
 
 
@@ -271,16 +296,22 @@ def format_id_to_map(info):
 
 def concordant_disease_pairs(record_list, map_to_mondo, min_submitters):
     """(mondo_id, ClinicalSignificance) pairs supported by >=min_submitters
-    distinct Submitters across record_list, regardless of each submitter's
-    own review status. Used by variant_records_to_disease() to rescue
-    gene-disease pairs whose individual submission records are all below
-    star_min but where multiple independent submitters agree on the same
+    distinct Submitters across record_list. Used by variant_records_to_disease()
+    to rescue gene-disease pairs whose individual submission records are all
+    below star_min but where multiple independent submitters agree on the same
     disease and the same classification.
+
+    Submitters below min_review_stars do not count toward the total. The rescue
+    deliberately ignores how *high* each submitter's own review status is -- that is
+    the point of it -- but a 0-star record states no assertion criteria at all, and
+    several submitters stating no criteria is not independent corroboration.
     """
     groups = {}
     for rec in record_list:
         clinsig = rec["ClinicalSignificance"]
         if clinsig not in predicate_map:
+            continue
+        if review_star_map[rec["ReviewStatus"].replace(" ", "_")] < min_review_stars:
             continue
 
         mondo_ids = set()
@@ -474,6 +505,10 @@ def qualifying_diseases(row, records, map_to_mondo, lit_only_variants):
     """
     aggregate_stars = review_star_map.get(row["CLNREVSTAT"], 0)
 
+    # Nothing with a 0-star aggregate qualifies by any path -- see min_review_stars.
+    if aggregate_stars < min_review_stars:
+        return {}, {}, {}, {}
+
     causes, _preds, causes_org = variant_records_to_disease(
         records,
         map_to_mondo,
@@ -485,7 +520,11 @@ def qualifying_diseases(row, records, map_to_mondo, lit_only_variants):
     assoc: dict = {}
     assoc_org: dict = {}
     if aggregate_stars <= publication_star_max and row["ID"] in lit_only_variants:
-        all_ids, _all_preds, all_org = variant_records_to_disease(records, map_to_mondo, star_min=0)
+        # star_min=min_review_stars, not 0: a 0-star submission record cannot supply the
+        # disease term either, or the floor would leak back in on the record axis.
+        all_ids, _all_preds, all_org = variant_records_to_disease(
+            records, map_to_mondo, star_min=min_review_stars
+        )
         for d in all_ids:
             if d not in causes:
                 assoc[d] = ""

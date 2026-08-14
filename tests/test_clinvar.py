@@ -178,15 +178,15 @@ MAP_TO_MONDO = {
 # overlapping locus -- case 6's GENEINFO carries USH2A-AS2 alongside USH2A, and the
 # antisense transcript must NOT produce a gene association.
 VARIANT_GENES = {
-    "1296989": ("NCBIGene:2475", "MTOR"),
-    "2505295": ("NCBIGene:4653", "MYOC"),
-    "8797": ("NCBIGene:659", "BMPR2"),
-    "156702": ("NCBIGene:2475", "MTOR"),
-    "179773": ("NCBIGene:7399", "USH2A"),
-    "654211": ("NCBIGene:462", "SERPINC1"),
-    "9000001": ("NCBIGene:4653", "MYOC"),
-    "9000002": ("NCBIGene:4653", "MYOC"),
-    "9000003": ("NCBIGene:4653", "MYOC"),
+    "1296989": ("HGNC:3942", "MTOR"),
+    "2505295": ("HGNC:7610", "MYOC"),
+    "8797": ("HGNC:1078", "BMPR2"),
+    "156702": ("HGNC:3942", "MTOR"),
+    "179773": ("HGNC:12601", "USH2A"),
+    "654211": ("HGNC:775", "SERPINC1"),
+    "9000001": ("HGNC:7610", "MYOC"),
+    "9000002": ("HGNC:7610", "MYOC"),
+    "9000003": ("HGNC:7610", "MYOC"),
     # 9000004 deliberately absent: ClinVar GeneID == -1, i.e. no asserted gene
 }
 
@@ -798,7 +798,7 @@ def test_case6_only_the_asserted_gene(test_case6_entities):
     assert len(test_case6_entities) == 3  # SequenceVariant, VariantToGene, VariantToDisease
     gene_assocs = [a for a in test_case6_entities if isinstance(a, VariantToGeneAssociation)]
     assert len(gene_assocs) == 1
-    assert gene_assocs[0].object == "NCBIGene:7399"
+    assert gene_assocs[0].object == "HGNC:12601"
     assert test_case6_entities[2].object == "MONDO:0019118"
 
 
@@ -881,7 +881,7 @@ def test_one_predicate_per_variant_disease():
         _make_record("Likely pathogenic", "C2981140", "Glaucoma_of_childhood"),
     ]
     entities = process_row(
-        row, {"9000005": records}, MAP_TO_MONDO, {"9000005": ("NCBIGene:4653", "MYOC")}
+        row, {"9000005": records}, MAP_TO_MONDO, {"9000005": ("HGNC:7610", "MYOC")}
     )
     disease_edges = [e for e in entities if isinstance(e, VariantToDiseaseAssociation)]
     assert len(disease_edges) == 1
@@ -896,7 +896,7 @@ def test_likely_pathogenic_also_causes():
     row = {**_TEST_ROW_TEMPLATE, "ID": "9000006"}
     records = [_make_record("Likely pathogenic", "C2981140", "Glaucoma_of_childhood")]
     entities = process_row(
-        row, {"9000006": records}, MAP_TO_MONDO, {"9000006": ("NCBIGene:4653", "MYOC")}
+        row, {"9000006": records}, MAP_TO_MONDO, {"9000006": ("HGNC:7610", "MYOC")}
     )
     disease_edges = [e for e in entities if isinstance(e, VariantToDiseaseAssociation)]
     assert len(disease_edges) == 1
@@ -924,7 +924,7 @@ def test_low_star_from_literature_is_associated_with():
            "CLNREVSTAT": "criteria_provided,_single_submitter"}
     records = [_make_record("Pathogenic", "C2981140", "Glaucoma_of_childhood",
                             review_status="criteria provided, single submitter")]
-    genes = {"9000007": ("NCBIGene:4653", "MYOC")}
+    genes = {"9000007": ("HGNC:7610", "MYOC")}
 
     without = process_row(row, {"9000007": records}, MAP_TO_MONDO, genes, frozenset())
     assert [e for e in without if isinstance(e, VariantToDiseaseAssociation)] == []
@@ -955,7 +955,7 @@ def test_pair_below_variant_threshold_is_dropped():
     is dropped, even when the variant itself qualifies on review status."""
     row = {**_TEST_ROW_TEMPLATE, "ID": "1296989",
            "CLNDISDB": "MONDO:MONDO:0100283,MedGen:CN300503"}
-    pair = ("NCBIGene:2475", "MONDO:0100283")
+    pair = ("HGNC:3942", "MONDO:0100283")
 
     below = process_row(row, VAR_RECORDS, MAP_TO_MONDO, VARIANT_GENES,
                         frozenset(), {pair: 1})
@@ -974,7 +974,57 @@ def test_strong_evidence_never_downgraded_by_publication_tier():
     records = [_make_record("Pathogenic", "C2981140", "Glaucoma_of_childhood",
                             review_status="criteria provided, single submitter")]
     edges = [e for e in process_row(row, {"9000008": records}, MAP_TO_MONDO,
-                                    {"9000008": ("NCBIGene:4653", "MYOC")}, {"9000008"})
+                                    {"9000008": ("HGNC:7610", "MYOC")}, {"9000008"})
              if isinstance(e, VariantToDiseaseAssociation)]
     assert len(edges) == 1
     assert edges[0].predicate == "biolink:causes"
+
+
+def test_zero_star_variant_emits_nothing():
+    """A 0-star aggregate is the absence of stated criteria, not weak evidence, so it is
+    excluded by every path -- including the publication tier, which used to accept
+    anything at or below `publication_star_max`."""
+    row = {**_TEST_ROW_TEMPLATE, "ID": "9000010",
+           "CLNREVSTAT": "no_assertion_criteria_provided"}
+    records = [_make_record("Pathogenic", "C2981140", "Glaucoma_of_childhood",
+                            review_status="reviewed by expert panel")]
+    edges = process_row(row, {"9000010": records}, MAP_TO_MONDO,
+                        {"9000010": ("HGNC:7610", "MYOC")}, {"9000010"})
+    assert [e for e in edges if isinstance(e, VariantToDiseaseAssociation)] == []
+
+
+def test_zero_star_records_do_not_count_toward_concordance():
+    """The concordance rescue deliberately ignores how *high* each submitter's review
+    status is, but two submitters who both state no assertion criteria are not
+    independent corroboration, so neither may count."""
+    row = {**_TEST_ROW_TEMPLATE, "ID": "9000011",
+           "CLNREVSTAT": "criteria_provided,_single_submitter"}
+    zero = [_make_record("Pathogenic", "C2981140", "Glaucoma_of_childhood",
+                         review_status="no assertion criteria provided", submitter=s)
+            for s in ("LabA", "LabB")]
+    assert [e for e in process_row(row, {"9000011": zero}, MAP_TO_MONDO,
+                                   {"9000011": ("HGNC:7610", "MYOC")})
+            if isinstance(e, VariantToDiseaseAssociation)] == []
+
+    # the same two submitters, each stating criteria, do corroborate
+    one = [_make_record("Pathogenic", "C2981140", "Glaucoma_of_childhood",
+                        review_status="criteria provided, single submitter", submitter=s)
+           for s in ("LabA", "LabB")]
+    edges = [e for e in process_row(row, {"9000011": one}, MAP_TO_MONDO,
+                                    {"9000011": ("HGNC:7610", "MYOC")})
+             if isinstance(e, VariantToDiseaseAssociation)]
+    assert len(edges) == 1
+    assert edges[0].predicate == "biolink:causes"
+
+
+def test_gene_edges_use_hgnc_ids():
+    """The Monarch KG keys human genes on HGNC -- its NCBIGene nodes are other species --
+    so a VariantToGeneAssociation subjected on NCBIGene resolves to nothing on merge."""
+    row = {**_TEST_ROW_TEMPLATE, "ID": "9000012",
+           "CLNREVSTAT": "criteria_provided,_multiple_submitters,_no_conflicts"}
+    records = [_make_record("Pathogenic", "C2981140", "Glaucoma_of_childhood")]
+    gene_assocs = [e for e in process_row(row, {"9000012": records}, MAP_TO_MONDO,
+                                          {"9000012": ("HGNC:7610", "MYOC")})
+                   if isinstance(e, VariantToGeneAssociation)]
+    assert len(gene_assocs) == 1
+    assert gene_assocs[0].object.startswith("HGNC:")

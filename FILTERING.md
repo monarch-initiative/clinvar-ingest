@@ -28,6 +28,7 @@ component in this repo implements it. Every claim below is traceable to a named 
 All in `src/clinvar_helpers.py`:
 
 ```python
+min_review_stars          = 1               # HARD FLOOR: nothing 0-star enters, by any path
 var2disease_star_min      = 3               # per-submission review-status floor
 min_concordant_submitters = 2               # independent-agreement rescue threshold
 aggregate_star_min        = 2               # ClinVar's own variant-level CLNREVSTAT floor
@@ -38,6 +39,26 @@ ASSEMBLY_PREFERENCE       = ("GRCh38", "GRCh37")
 predicate_map             = {...}           # which ClinicalSignificance values survive at all
 review_star_map           = {...}           # ReviewStatus text -> 0-4 stars
 ```
+
+### The 0-star floor
+
+`min_review_stars = 1` is a hard floor applied *before* any path is considered. 0 stars is not
+weak evidence — it is the absence of an assertion. The `review_star_map` values scoring 0 are
+`no_assertion_criteria_provided`, `no_classification_provided`,
+`no_classifications_from_unflagged_records`, `no_classification_for_the_single_variant` and
+`flagged_submission`. A classification with no stated criteria cannot be weighed, and a published
+basis does not repair that.
+
+It is enforced on **both** star axes, which measure different things:
+
+| axis | field | meaning |
+|---|---|---|
+| aggregate | `row["CLNREVSTAT"]` | ClinVar's status *across* a variant's submitters (0–4) |
+| per-record | `rec["ReviewStatus"]` | one submission's own status (0, 1, 3 or 4 — never 2) |
+
+and in all three places 0 stars could otherwise enter: the aggregate gate in
+`qualifying_diseases()`, the publication tier's inner record filter (previously `star_min=0`),
+and `concordant_disease_pairs()`.
 
 ## The pipeline, in the order filters actually apply
 
@@ -116,7 +137,10 @@ A (variant, disease) survives if **any** of three paths holds:
   `practice guideline` (4).
 - **Path B — concordance rescue.** `concordant_disease_pairs()` finds **≥2 distinct
   `Submitter` values** asserting the *same* MONDO disease with the *exact same*
-  `ClinicalSignificance` string, at any star level.
+  `ClinicalSignificance` string. The rescue deliberately ignores how *high* each submitter's
+  own review status is — that is its purpose — but records below `min_review_stars` do not
+  count toward the total, because several submitters stating no assertion criteria is not
+  independent corroboration.
 - **Path C — ClinVar's aggregate review status.** The variant's `CLNREVSTAT` (from the VCF,
   not the submission file) reaches `>= aggregate_star_min`, i.e. ClinVar itself scored it
   *"criteria provided, multiple submitters, no conflicts"* or better. This is the only place
@@ -124,7 +148,7 @@ A (variant, disease) survives if **any** of three paths holds:
   record can carry it, and paths A and B structurally cannot see it.
 
 - **Path D — the classification came from the literature.** A variant whose aggregate is
-  `<= publication_star_max` (1 star or less) and which has a P/LP record with
+  `<= publication_star_max` **and `>= min_review_stars`** (so: exactly 1 star) and which has a P/LP record with
   `CollectionMethod == "literature only"` is admitted for the diseases the other paths did not
   claim — but under `biolink:associated_with_increased_likelihood_of`, because the evidence is
   weaker. See `literature_only_variants()`.
@@ -211,8 +235,12 @@ Not a filter on the variant — a filter on which gene edge is emitted.
 - One row per variant per genome build. `ASSEMBLY_PREFERENCE = ("GRCh38", "GRCh37")` selects the
   most-preferred build present per `VariationID`, never more than one. Filtering to GRCh38 alone
   would discard ~56k variants ClinVar has only ever placed on GRCh37, over 99% of them structural.
-- `GeneID == -1` means ClinVar declines to attribute a gene. **No `GENEINFO` fallback** — no gene
-  edge is emitted, and the variant keeps its disease and phenotype edges.
+- The emitted id is **`HGNC_ID`, not `GeneID`**. The Monarch KG keys *human* genes on HGNC — its
+  `NCBIGene` nodes are other species — so an `NCBIGene`-subjected `VariantToGeneAssociation`
+  resolves to nothing on merge. It dangles rather than errors, which is why this went unnoticed.
+  `variant_summary.txt.gz` carries `HGNC_ID` alongside `GeneID`, so this costs no extra input.
+- `GeneID == -1`, or a row with no `HGNC_ID`, means no gene is attributed. **No `GENEINFO`
+  fallback** — no gene edge is emitted, and the variant keeps its disease edges.
 
 > **The VCF's `GENEINFO` field is deliberately not used for this.** It lists every locus whose span
 > covers the variant — a positional annotation, not a causal claim. Reading it as causal gave
