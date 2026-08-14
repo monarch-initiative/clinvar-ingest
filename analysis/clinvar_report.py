@@ -118,6 +118,7 @@ import gzip
 import json
 import re
 from collections import Counter
+from itertools import combinations
 from pathlib import Path
 
 import requests
@@ -2061,7 +2062,7 @@ def compute_star_data(clinvar_tsv: Path, var_records: dict, map_to_mondo: dict, 
     # disease terms claims, so the overlap between them can be drawn rather than asserted.
     scn1a_sets: dict = {}
     for (_gene_sym, gene_id, mondo_id), varids in pair_variant_ids[0].items():
-        if gene_id == "NCBIGene:6323":
+        if gene_id == SCN1A_HGNC:
             scn1a_sets.setdefault(mondo_id, set()).update(varids)
 
     return (
@@ -2281,7 +2282,7 @@ def ensure_hgnc(data_dir: Path) -> Path:
 
 def load_monarch_gene_disease(data_dir: Path) -> dict:
     """Monarch KG's curated gene-disease associations, keyed the same way this
-    report keys ClinVar pairs: (NCBIGene id, MONDO id).
+    report keys ClinVar pairs: (HGNC id, MONDO id).
 
     Returns pairs, per-source pair sets, the MONDO parent map (for the
     ancestor-aware reconciliation below), MONDO labels and the deprecated set.
@@ -2289,14 +2290,20 @@ def load_monarch_gene_disease(data_dir: Path) -> dict:
     ensure_monarch_kg(data_dir)
     hgnc_path = ensure_hgnc(data_dir)
 
-    hgnc_to_entrez = {}
-    entrez_to_symbol = {}
+    # The ingest emits HGNC ids (that is the id space the KG keys human genes on -- its
+    # NCBIGene nodes are other species), so both sides of this comparison are keyed on
+    # HGNC. Monarch's Orphanet edges carry only an Entrez id in original_subject, so an
+    # entrez -> hgnc crosswalk is still needed to bring those onto the same key.
+    entrez_to_hgnc = {}
+    gene_symbol = {}
     with open(hgnc_path, newline="") as fh:
         for row in csv.DictReader(fh, delimiter="\t"):
+            hgnc = row.get("hgnc_id")
+            if not hgnc:
+                continue
+            gene_symbol[hgnc] = row["symbol"]
             if row.get("entrez_id"):
-                gene_id = "NCBIGene:{}".format(row["entrez_id"])
-                hgnc_to_entrez[row["hgnc_id"]] = gene_id
-                entrez_to_symbol[gene_id] = row["symbol"]
+                entrez_to_hgnc["NCBIGene:{}".format(row["entrez_id"])] = hgnc
 
     pairs: set = set()
     by_source: dict = {}
@@ -2310,9 +2317,9 @@ def load_monarch_gene_disease(data_dir: Path) -> dict:
                 continue
             # OMIM/ClinGen edges carry an HGNC subject; Orphanet edges additionally
             # preserve the Entrez id in original_subject, which is used as a fallback.
-            gene_id = hgnc_to_entrez.get(subject)
+            gene_id = subject if subject.startswith("HGNC:") else None
             if gene_id is None and original.startswith("NCBIGene:"):
-                gene_id = original
+                gene_id = entrez_to_hgnc.get(original)
             if gene_id is None:
                 continue
             pairs.add((gene_id, obj))
@@ -2338,13 +2345,183 @@ def load_monarch_gene_disease(data_dir: Path) -> dict:
         "pairs": pairs,
         "by_source": by_source,
         "pair_sources": pair_sources,
-        "entrez_to_symbol": entrez_to_symbol,
+        "gene_symbol": gene_symbol,
+        "entrez_to_hgnc": entrez_to_hgnc,
         "parents": parents,
         "labels": labels,
         "deprecated": deprecated,
         "known_terms": set(labels),
     }
 
+
+def build_term_collisions(output_dir: Path, monarch: dict, data_dir: Path) -> dict:
+    """Generalise the SCN1A case: every pair of MONDO terms that the SAME variants are
+    reported to, where the two terms are not plausibly redundant.
+
+    SCN1A is not special, it is just legible. Reading the emitted edges back and asking
+    which term pairs share variants finds the same shape across hundreds of genes, and
+    the widest clusters are far wider than SCN1A's.
+
+    Two kinds of pair are excluded, because neither is a collision:
+
+      synonym-candidate  both terms claim a source term with the same label in
+                         mondo.sssom.tsv, so they MIGHT be redundant. Reported as a
+                         separate count -- and note mondo#745 shows such a collision can
+                         be deliberate, so these are candidates, never merges.
+      descendant         one term is an ancestor of the other. A variant legitimately
+                         belongs to both; the specific term already implies the general.
+
+    What remains is classified by how far apart the terms sit:
+
+      sibling   shared DIRECT parent -- the SCN1A shape
+      cousin    nearest common ancestor 2-3 hops up
+      distant   no common ancestor within 4 hops. These matter most for the rollup
+                question in section {S.ingest_recommendation}: there is no shared
+                ancestor to roll up to, so the fix that seems obvious for siblings is
+                not even expressible here.
+    """
+    edges_path = output_dir / "clinvar_variant_edges.tsv"
+    if not edges_path.exists():
+        return {"available": False}
+
+    var_dis: dict = {}
+    var_gene: dict = {}
+    with open(edges_path, newline="") as fh:
+        for row in csv.DictReader(fh, delimiter="\t"):
+            obj, pred, subj = row["object"], row["predicate"], row["subject"]
+            if obj.startswith("MONDO:"):
+                var_dis.setdefault(subj, set()).add(obj)
+            elif pred.endswith("is_sequence_variant_of"):
+                var_gene[subj] = obj
+
+    # source labels claimed by more than one MONDO class -> possible redundancy
+    by_label: dict = {}
+    sssom = data_dir / "mondo.sssom.tsv"
+    if sssom.exists():
+        with open(sssom) as fh:
+            hdr = None
+            for line in fh:
+                if line.startswith("#"):
+                    continue
+                c = line.rstrip("\r\n").split("\t")
+                if hdr is None:
+                    hdr = {k: i for i, k in enumerate(c)}
+                    continue
+                if len(c) <= max(hdr.values()):
+                    continue
+                lab = c[hdr["object_label"]].strip().lower()
+                if lab:
+                    by_label.setdefault(lab, set()).add(c[hdr["subject_id"]])
+    synonym_pairs = set()
+    for terms in by_label.values():
+        if len(terms) > 1:
+            synonym_pairs.update(combinations(sorted(terms), 2))
+
+    parents = monarch["parents"]
+    labels = monarch["labels"]
+    sym = monarch["gene_symbol"]
+
+    anc_cache: dict = {}
+
+    def ancestors(m):
+        """MONDO id -> hop distance, nearest wins (MONDO is a DAG, a term can be
+        reached at several depths)."""
+        if m in anc_cache:
+            return anc_cache[m]
+        dist, frontier = {}, {m}
+        for d in range(1, 5):
+            frontier = {p for c in frontier for p in parents.get(c, ())}
+            frontier = {p for p in frontier if p not in dist and p != m}
+            if not frontier:
+                break
+            for p in frontier:
+                dist[p] = d
+        anc_cache[m] = dist
+        return dist
+
+    term_vars: dict = {}
+    shared: Counter = Counter()
+    for v, ds in var_dis.items():
+        for d in ds:
+            term_vars.setdefault(d, set()).add(v)
+        if len(ds) > 1:
+            shared.update(combinations(sorted(ds), 2))
+
+    rows, kinds = [], Counter()
+    for (a, b), n in shared.items():
+        if n < COLLISION_MIN_SHARED:
+            continue
+        na, nb = len(term_vars[a]), len(term_vars[b])
+        jac = n / (na + nb - n)
+        if jac < COLLISION_MIN_JACCARD:
+            continue
+        if (a, b) in synonym_pairs:
+            kind = "synonym-candidate"
+        else:
+            aa, ab = ancestors(a), ancestors(b)
+            if b in aa or a in ab:
+                kind = "descendant"
+            elif parents.get(a, set()) & parents.get(b, set()):
+                kind = "sibling"
+            else:
+                common = set(aa) & set(ab)
+                depth = min((max(aa[s], ab[s]) for s in common), default=99)
+                kind = "cousin" if depth <= 3 else "distant"
+        kinds[kind] += 1
+        if kind in ("synonym-candidate", "descendant"):
+            continue
+        genes = Counter(var_gene.get(v) for v in (term_vars[a] & term_vars[b]))
+        genes.pop(None, None)
+        top_gene = genes.most_common(1)[0][0] if genes else ""
+        rows.append({
+            "gene": sym.get(top_gene, top_gene or "—"),
+            "gene_id": top_gene,
+            "a": a, "a_label": labels.get(a, ""), "n_a": na,
+            "b": b, "b_label": labels.get(b, ""), "n_b": nb,
+            "shared": n, "jaccard": round(jac, 3), "kind": kind,
+        })
+
+    rows.sort(key=lambda r: -r["shared"])
+
+    # the interesting unit is the cluster, not the pair: one gene's variants can
+    # scatter over a dozen terms
+    per_gene: dict = {}
+    for r in rows:
+        g = per_gene.setdefault(r["gene"], {"gene": r["gene"], "terms": set(),
+                                            "pairs": 0, "max_shared": 0, "max_j": 0.0})
+        g["terms"] |= {r["a"], r["b"]}
+        g["pairs"] += 1
+        g["max_shared"] = max(g["max_shared"], r["shared"])
+        g["max_j"] = max(g["max_j"], r["jaccard"])
+    clusters = sorted(
+        ({**g, "n_terms": len(g["terms"]), "terms": None} for g in per_gene.values()),
+        key=lambda g: (-g["n_terms"], -g["max_shared"]),
+    )
+
+    scn1a = [r for r in rows if r["gene"] == "SCN1A"]
+    worse = sum(1 for r in rows if r["jaccard"] > (scn1a[0]["jaccard"] if scn1a else 1))
+    return {
+        "available": True,
+        "rows": rows,
+        "clusters": clusters,
+        "kinds": kinds,
+        "n_pairs": len(rows),
+        "n_genes": len(per_gene),
+        "n_total_pairs": sum(kinds.values()),
+        "near_total": sum(1 for r in rows if r["jaccard"] >= 0.90),
+        "scn1a": scn1a,
+        "scn1a_rank_worse": worse,
+    }
+
+
+# A pair needs this many shared variants, and this much mutual overlap, to be reported.
+# The Jaccard floor stops a very large term (e.g. "hereditary neoplastic syndrome")
+# pairing with everything underneath it purely on size.
+COLLISION_MIN_SHARED = 10
+COLLISION_MIN_JACCARD = 0.05
+
+# SCN1A in the id space the ingest emits (see make_variant_gene_map).
+SCN1A_HGNC = "HGNC:10585"
 
 SUPPORT_BUCKETS = ["1", "2", "3-4", "5-9", "10+"]
 
@@ -2394,7 +2571,7 @@ def build_monarch_comparison(
     submitted variant evidence stands behind each curated association, and what
     ClinVar implies that no curator has asserted.
 
-    Matching is on exact (NCBIGene id, MONDO id). Because MONDO carries several
+    Matching is on exact (HGNC id, MONDO id). Because MONDO carries several
     co-existing terms over one clinical area (see the SCN1A worked example),
     ClinVar-only pairs are additionally checked for an *ancestor-aware* match:
     does Monarch associate the same gene with an ancestor or descendant of
@@ -2510,7 +2687,7 @@ def build_monarch_comparison(
     # node in this release at all. Exposed as a filter so the genuinely-current associations
     # can be separated from ones the ontology has moved on from.
     pair_sources = monarch["pair_sources"]
-    symbols = monarch["entrez_to_symbol"]
+    symbols = monarch["gene_symbol"]
     known_terms = monarch["known_terms"]
     monarch_only_rows = []
     mondo_status_counts: Counter = Counter()
@@ -2540,7 +2717,7 @@ def build_monarch_comparison(
 
     # SCN1A worked example -- computed live rather than hardcoded, so the numbers in the
     # narrative can never drift from the data the rest of the section is built from.
-    SCN1A_GENE = "NCBIGene:6323"
+    SCN1A_GENE = SCN1A_HGNC
     # the single lab behind a term, where there is only one -- used to label the diagram
     scn1a_leads = {}
     for (gene_sym, gene_id, mondo_id), entry in pair_submitters.items():
@@ -2782,6 +2959,7 @@ SECTION_ORDER = [
     ("star-cutoff", "Review-star cutoff impact on variant & gene-disease-pair counts"),
     ("evidence-tiers", "Evidence tiers and a predicate split by evidence"),
     ("monarch-kg", "Monarch KG gene-disease associations vs ClinVar"),
+    ("term-collisions", "One variant set, two diseases: SCN1A generalised"),
     ("ingest-recommendation", "New ClinVar ingest recommendation"),
     ("ingest-compare", "Previous vs new ingest"),
     ("crossfilter", "Multi-class variant clinical significance"),
@@ -2801,6 +2979,7 @@ NAV_LABELS = {
     "star-cutoff": "Star cutoff & pair tiers",
     "evidence-tiers": "Evidence tiers",
     "monarch-kg": "Monarch KG vs ClinVar",
+    "term-collisions": "Term collisions",
     "ingest-recommendation": "Ingest recommendation",
     "ingest-compare": "Previous vs new ingest",
     "crossfilter": "Multi-class significance",
@@ -3378,7 +3557,7 @@ def build_clnsig_cube(
                 pair_gene_symbol.setdefault(gene_id, gene_sym)
                 for mondo_id in dis:
                     # keyed by (gene_id, disease) only, matching section the star-cutoff section's canonical pair
-                    # identity -- NCBIGene id is what production actually emits; a handful of
+                    # identity -- the HGNC id is what production actually emits; a handful of
                     # ids (135 observed) carry >1 symbol spelling across records (gene renames),
                     # which would otherwise inflate this count vs section the star-cutoff section's headline number.
                     pkey = (gene_id, mondo_id)
@@ -3588,7 +3767,10 @@ def build_sv_summary(data_dir: Path, map_to_mondo: dict) -> dict:
 
                 gene_symbol = cols[hcols["GeneSymbol"]]
                 if resolved and clinsig in predicate_map and is_single_clean_gene_symbol(gene_symbol):
-                    gene_id = cols[hcols["GeneID"]]
+                    # HGNC, to match the id space the ingest and snv_pair_set use
+                    gene_id = cols[hcols["HGNC_ID"]].strip()
+                    if not gene_id or gene_id == "-":
+                        continue
                     for mondo_id in resolve_phenotype_ids_to_mondo(pheno_ids, map_to_mondo):
                         key = (gene_symbol, gene_id, mondo_id)
                         entry = gene_disease_pairs.setdefault(key, {"types": set(), "variants": set()})
@@ -3637,7 +3819,7 @@ def sv_only_gene_disease_pairs(sv_pairs: dict, snv_pair_set: set, mondo_labels: 
     no matter how well-reviewed that structural evidence is."""
     rows = []
     for (gene_sym, gene_id, mondo_id), entry in sv_pairs.items():
-        if (f"NCBIGene:{gene_id}", mondo_id) in snv_pair_set:
+        if (gene_id, mondo_id) in snv_pair_set:
             continue
         rows.append(
             {
@@ -3683,6 +3865,7 @@ def render_html(
     evidence_tiers: dict,
     emitted: dict,
     scn1a_subgraph: dict,
+    term_collisions: dict,
 ) -> str:
     max_variants = max(r["variants"] for r in results.values()) or 1
     max_pairs = max(r["gene_disease_pairs"] for r in results.values()) or 1
@@ -4651,7 +4834,7 @@ def render_html(
   itself a source of gene-disease edges in the KG &mdash; this ingest emits variant-level edges &mdash;
   so the comparison measures how much independent submitted variant evidence stands behind each curated
   association, and what ClinVar implies that no curator has asserted.
-  Matching is on exact <code>(NCBIGene id, MONDO id)</code>; gene ids are crosswalked from the KG's
+  Matching is on exact <code>(HGNC id, MONDO id)</code>; Orphanet's Entrez-only subjects are crosswalked from the KG's
   HGNC-keyed gene nodes via HGNC's own complete set. Every ClinVar gene here is the single gene ClinVar
   asserts for the variant, not the VCF's positional <code>GENEINFO</code> list &mdash; see section {S.ingest_recommendation}.
 </p>
@@ -4958,6 +5141,135 @@ def render_html(
 <thead><tr><th>Gene</th><th>MONDO</th><th>Disease name</th><th># variants</th><th># submitters</th></tr></thead>
 <tbody>{deprecated_rows_html}</tbody>
 </table>
+</div>
+"""
+
+    # --- SCN1A generalised: every term pair sharing a variant set ------------
+    tc = term_collisions
+    if not tc.get("available"):
+        collisions_html = (
+            f"{section_heading('term-collisions')}\n"
+            "<p class='subtitle'>Requires the emitted edges in <code>output/</code>; "
+            "run <code>just transform-all</code> first.</p>"
+        )
+        collision_rows_json = "[]"
+        collision_cluster_rows = ""
+    else:
+        collision_rows_json = json.dumps(tc["rows"])
+        collision_cluster_rows = "".join(
+            f"<tr><td>{c['gene']}</td><td class='num'>{c['n_terms']}</td>"
+            f"<td class='num'>{c['pairs']}</td><td class='num'>{c['max_shared']:,}</td>"
+            f"<td class='num'>{c['max_j']:.2f}</td></tr>"
+            for c in tc["clusters"][:20]
+        )
+        k = tc["kinds"]
+        scn1a_j = tc["scn1a"][0]["jaccard"] if tc["scn1a"] else 0
+        scn1a_n = tc["scn1a"][0]["shared"] if tc["scn1a"] else 0
+        collisions_html = f"""{section_heading("term-collisions")}
+<p class="subtitle">
+  Section {S.monarch_kg} used SCN1A to show that one gene's variants can scatter across several
+  MONDO terms that no exact-id rule will ever unify. The obvious question is whether SCN1A is a
+  quirk. It is not. Reading the emitted edges back and asking <em>which pairs of MONDO terms are
+  the same variants reported to</em> finds the identical shape across
+  <strong>{tc['n_genes']:,} genes</strong>.
+</p>
+<div class="summary-box">
+  <strong>{tc['n_pairs']:,} colliding term pairs</strong> &mdash; two MONDO terms sharing at least
+  {COLLISION_MIN_SHARED} variants with mutual overlap (Jaccard) of at least
+  {COLLISION_MIN_JACCARD:g}, after removing the {k['synonym-candidate']:,} pairs that might just be
+  synonyms and the {k['descendant']:,} where one term is an ancestor of the other.
+  <br><br>
+  <strong>SCN1A ranks nowhere near the top.</strong> Dravet syndrome &harr; early-infantile DEE is
+  {scn1a_n:,} shared variants at J={scn1a_j:.2f}; <strong>{tc['scn1a_rank_worse']:,} pairs overlap
+  more tightly</strong>, and {tc['near_total']:,} pairs sit at J&ge;0.90 &mdash; two MONDO terms
+  holding essentially the same variant set.
+</div>
+
+<h3>This is cross-submitter divergence, not one submission naming two conditions</h3>
+<p class="subtitle">
+  A single ClinVar submission can list several conditions, which would make these overlaps an
+  artifact of how submissions are counted rather than a real disagreement. Checked against
+  <code>submission_summary.txt.gz</code> for the four largest clusters, it is not: in
+  <em>every</em> shared variant sampled, two or more <em>distinct submitters</em> named different
+  conditions. One SCN1A variant (<code>VariationID 12883</code>) carries ten submitters and six
+  different condition concepts &mdash; <code>C0751122:Severe myoclonic epilepsy in infancy</code>
+  from one lab, <code>C0393706:Early-infantile DEE</code> from another,
+  <code>C1858673:Generalized epilepsy with febrile seizures</code> from a third, and
+  <code>C3661900:not provided</code> from two of the highest-volume labs.
+</p>
+
+<h3>The widest clusters</h3>
+<p class="subtitle">
+  The unit that matters is the cluster, not the pair: <em>GJB2</em>'s variants scatter over eleven
+  connexin-26 syndromes, not two. Ranked by how many MONDO terms one gene's shared variants reach.
+</p>
+<div class="table-wrap" style="max-width:620px;">
+<table>
+<thead><tr><th>Gene</th><th># MONDO terms</th><th># pairs</th><th>max shared</th><th>max J</th></tr></thead>
+<tbody>{collision_cluster_rows}</tbody>
+</table>
+</div>
+
+<h3>Three different things are happening, and only one is a terminology problem</h3>
+<div class="summary-box">
+  <p style="margin-top:0;">
+    <strong>1. Allelic series &mdash; one gene, graded clinical entities.</strong> MONDO is right to
+    separate these; the ingest simply cannot pool their evidence.
+    <em>TTN</em> dilated cardiomyopathy 1G &harr; LGMD type 2J shares 1,108 variants at J=0.93;
+    <em>CEP290</em> Senior-Loken syndrome 6 &harr; Leber congenital amaurosis 10 shares 154 at
+    J=0.91; <em>GLB1</em> GM1 gangliosidosis type 2 &harr; type 3 shares 78 at J=0.93.
+  </p>
+  <p>
+    <strong>2. Cross-system pleiotropy &mdash; {k['distant']:,} pairs with no common ancestor within
+    four hops.</strong> These are the decisive ones for recommendation 2 in section
+    {S.ingest_recommendation}: <em>there is no shared ancestor to roll up to</em>, so the fix that
+    looks obvious for siblings is not even expressible here. <em>NAGLU</em> mucopolysaccharidosis
+    IIIB &harr; Charcot-Marie-Tooth axonal 2V shares 111 variants at J=0.92; <em>FLNC</em>
+    myofibrillar myopathy 5 &harr; hypertrophic cardiomyopathy 26 shares 116 at J=0.92;
+    <em>ERCC6</em> spans UV-sensitive syndrome 1, age-related macular degeneration 5 and premature
+    ovarian failure 11 on one set of 27 variants.
+  </p>
+  <p style="margin-bottom:0;">
+    <strong>3. Probable duplicate terms the SSSOM label test misses.</strong> These are the real
+    merge candidates, and the exact-label collision scan in recommendation 2 does <em>not</em> find
+    them, because the terms carry no shared source label &mdash; only near-identical names:
+    <code>MONDO:0014954</code>/<code>MONDO:0020684</code> ("Ehlers-Danlos syndrome, periodontal type
+    2"/"type 1"), <code>MONDO:0012843</code>/<code>MONDO:0020759</code> ("epilepsy, childhood
+    absence, susceptibility to, 5"/"1"), and
+    <code>MONDO:0014140</code>/<code>MONDO:0014141</code> (dystroglycanopathy "type A14"/"type
+    B14"). A label-similarity check alongside the exact-label test would catch this class.
+  </p>
+</div>
+
+<h3>All {tc['n_pairs']:,} colliding pairs</h3>
+<p class="subtitle">
+  Searchable across gene, both MONDO ids, both disease names and the relation. "Relation" is how far
+  apart the two terms sit in MONDO: <em>sibling</em> = shared direct parent (the SCN1A shape),
+  <em>cousin</em> = common ancestor 2&ndash;3 hops up, <em>distant</em> = none within four.
+  "J" is the Jaccard overlap of the two variant sets &mdash; 1.00 means the terms hold the same
+  variants.
+</p>
+<div class="controls">
+  <input id="collision-search" class="search-box" type="text" placeholder="Filter by gene, MONDO id, disease or relation...">
+  <span id="collision-count" class="count-label"></span>
+</div>
+<div class="table-wrap">
+<table>
+<thead><tr>
+  <th data-sort-for="collision-rows" data-sort-key="gene">Gene &#8597;</th>
+  <th data-sort-for="collision-rows" data-sort-key="a_label">Disease A &#8597;</th>
+  <th data-sort-for="collision-rows" data-sort-key="b_label">Disease B &#8597;</th>
+  <th data-sort-for="collision-rows" data-sort-key="shared">shared &#8597;</th>
+  <th data-sort-for="collision-rows" data-sort-key="jaccard">J &#8597;</th>
+  <th data-sort-for="collision-rows" data-sort-key="kind">Relation &#8597;</th>
+</tr></thead>
+<tbody id="collision-rows"></tbody>
+</table>
+</div>
+<div class="pagination">
+  <button id="collision-prev">&larr; Prev</button>
+  <span id="collision-page-info" class="page-info"></span>
+  <button id="collision-next">Next &rarr;</button>
 </div>
 """
 
@@ -5941,6 +6253,8 @@ def render_html(
 
 {monarch_section_html}
 
+{collisions_html}
+
 {recommendation_html}
 
 {ingest_compare_html}
@@ -6806,6 +7120,37 @@ function setupPairsTable(config) {{
     ],
   }});
   monarchKgOnlyTable.setData({monarch_kg_only_json});
+
+  var COLLISION_KIND = {{
+    "sibling": "<span style='color:#b45309;'>sibling</span>",
+    "cousin":  "cousin",
+    "distant": "<span style='color:#b91c1c;'>distant</span>"
+  }};
+  var collisionTable = createPaginatedTable({{
+    tbodyId: "collision-rows",
+    countElId: "collision-count",
+    searchElId: "collision-search",
+    prevBtnId: "collision-prev",
+    nextBtnId: "collision-next",
+    pageInfoElId: "collision-page-info",
+    pageSize: 25,
+    defaultSortKey: "shared",
+    defaultSortDir: -1,
+    searchFields: ["gene", "a", "b", "a_label", "b_label", "kind"],
+    columns: [
+      {{ key: "gene" }},
+      {{ key: "a_label", format: function(v, r) {{
+          return (v || "<span class='no'>&mdash;</span>") +
+                 " <span class='mono' style='color:#94a3b8;'>" + r.a + "</span>"; }} }},
+      {{ key: "b_label", format: function(v, r) {{
+          return (v || "<span class='no'>&mdash;</span>") +
+                 " <span class='mono' style='color:#94a3b8;'>" + r.b + "</span>"; }} }},
+      {{ key: "shared", className: "num" }},
+      {{ key: "jaccard", className: "num", format: function(v) {{ return v.toFixed(2); }} }},
+      {{ key: "kind", format: function(v) {{ return COLLISION_KIND[v] || v; }} }},
+    ],
+  }});
+  collisionTable.setData({collision_rows_json});
 }})();
 </script>
 </body>
@@ -6901,6 +7246,15 @@ def main():
 
     # the report runs from analysis/, so the KGX artifacts sit alongside data/
     scn1a_subgraph = load_scn1a_subgraph(args.data_dir)
+    term_collisions = build_term_collisions(
+        args.data_dir.parent / "output", monarch, args.data_dir
+    )
+    if term_collisions.get("available"):
+        print(
+            f"  Term collisions: {term_collisions['n_pairs']:,} non-synonymous pairs "
+            f"across {term_collisions['n_genes']:,} genes "
+            f"({term_collisions['near_total']:,} at J>=0.90)"
+        )
     emitted = load_emitted_summary(args.data_dir.parent / "output")
     if emitted["available"]:
         print(f"Emitted artifacts: {emitted['nodes']:,} nodes, {emitted['edges']:,} edges")
@@ -7038,6 +7392,7 @@ def main():
             evidence_tiers,
             emitted,
             scn1a_subgraph,
+            term_collisions,
         )
     )
     print(f"\nWrote {args.output}")

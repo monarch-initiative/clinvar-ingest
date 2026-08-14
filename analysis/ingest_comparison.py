@@ -42,7 +42,7 @@ UNCHAR_ORF_RE = re.compile(r"^C\d+orf\d+$", re.IGNORECASE)
 READTHROUGH_RE = re.compile(r"^[A-Z0-9]+-[A-Z0-9]+$")
 
 
-def load_side(out_dir: Path) -> dict:
+def load_side(out_dir: Path, entrez_to_hgnc: dict | None = None) -> dict:
     """Profile one branch's KGX output: counts, predicates, and the gene-disease pairs
     it implies by crossing (variant->gene) with (variant->disease)."""
     nodes: dict = {}
@@ -62,7 +62,15 @@ def load_side(out_dir: Path) -> dict:
             n_edges += 1
             preds[row["predicate"]] += 1
             if row["predicate"].endswith("is_sequence_variant_of"):
-                var_gene[row["subject"]].add(row["object"])
+                # Branches may emit different gene id spaces (this one switched from
+                # NCBIGene to HGNC). Normalise to HGNC so gained/dropped pairs compare
+                # like with like rather than reporting every pair as both.
+                gid = row["object"]
+                if entrez_to_hgnc is not None and gid.startswith("NCBIGene:"):
+                    gid = entrez_to_hgnc.get(gid)
+                    if gid is None:
+                        continue
+                var_gene[row["subject"]].add(gid)
             elif row["object"].startswith("MONDO:"):
                 var_dis[row["subject"]].add(row["object"])
 
@@ -88,16 +96,18 @@ def load_side(out_dir: Path) -> dict:
 
 
 def load_kg_pairs(data_dir: Path) -> tuple[set, int, int]:
-    """The KG's curated gene-disease pairs keyed on (NCBIGene, MONDO), plus its raw
+    """The KG's curated gene-disease pairs keyed on (HGNC, MONDO), plus its raw
     node/edge counts. Mirrors load_monarch_gene_disease() in clinvar_report.py: OMIM and
     ClinGen edges carry an HGNC subject, Orphanet's keep Entrez in original_subject."""
-    hgnc_to_entrez, symbols = {}, {}
+    entrez_to_hgnc, symbols = {}, {}
     with open(data_dir / "hgnc_complete_set.txt", newline="") as fh:
         for row in csv.DictReader(fh, delimiter="\t"):
+            hgnc = row.get("hgnc_id")
+            if not hgnc:
+                continue
+            symbols[hgnc] = row["symbol"]
             if row.get("entrez_id"):
-                gid = f"NCBIGene:{row['entrez_id']}"
-                hgnc_to_entrez[row["hgnc_id"]] = gid
-                symbols[gid] = row["symbol"]
+                entrez_to_hgnc[f"NCBIGene:{row['entrez_id']}"] = hgnc
 
     pairs = set()
     with open(data_dir / "mk_gene_disease.tsv") as fh:
@@ -105,9 +115,9 @@ def load_kg_pairs(data_dir: Path) -> tuple[set, int, int]:
             p = line.rstrip("\n").split("\t")
             if len(p) < 3 or not p[1].startswith("MONDO:"):
                 continue
-            gene = hgnc_to_entrez.get(p[0])
+            gene = p[0] if p[0].startswith("HGNC:") else None
             if gene is None and len(p) > 3 and p[3].startswith("NCBIGene:"):
-                gene = p[3]
+                gene = entrez_to_hgnc.get(p[3])
             if gene:
                 pairs.add((gene, p[1]))
 
@@ -115,7 +125,7 @@ def load_kg_pairs(data_dir: Path) -> tuple[set, int, int]:
         n_nodes = sum(1 for _ in fh) - 1
     with open(data_dir / "monarch-kg_edges.tsv") as fh:
         n_edges = sum(1 for _ in fh) - 1
-    return pairs, n_nodes, n_edges, symbols
+    return pairs, n_nodes, n_edges, symbols, entrez_to_hgnc
 
 
 def describe_dropped(dropped: set, base: dict, head: dict, symbols: dict) -> list[str]:
@@ -203,9 +213,9 @@ def main() -> None:
     ap.add_argument("--out", type=Path, default=Path("../INGEST_COMPARISON.md"))
     args = ap.parse_args()
 
-    base = load_side(args.base_output)
-    head = load_side(args.head_output)
-    kg_pairs, kg_nodes, kg_edges, symbols = load_kg_pairs(args.data_dir)
+    kg_pairs, kg_nodes, kg_edges, symbols, entrez_to_hgnc = load_kg_pairs(args.data_dir)
+    base = load_side(args.base_output, entrez_to_hgnc)
+    head = load_side(args.head_output, entrez_to_hgnc)
 
     def delta(a: int, b: int) -> str:
         return f"{a - b:+,} ({100 * (a - b) / b:+.1f}%)" if b else "n/a"
