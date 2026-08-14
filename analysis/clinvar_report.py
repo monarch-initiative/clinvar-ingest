@@ -4301,7 +4301,7 @@ def render_html(
         submitters, or an expert panel)</td></tr>
 <tr><td><code>biolink:associated_with_increased_likelihood_of</code></td>
     <td class="num">{em_assoc:,}</td>
-    <td>variant &rarr; disease, &le;1&#9733; but with published support</td></tr>
+    <td>variant &rarr; disease, exactly 1&#9733; with published support (0&#9733; is excluded outright)</td></tr>
 </tbody>
 </table>
 </div>
@@ -4365,7 +4365,7 @@ def render_html(
   marginally high: the combination matching the shipping filter predicts
   <span id="fp-selfcheck">-</span> against {em['nodes']:,} nodes actually emitted &mdash; though
   the emitted figure is additionally narrowed by the variant-class prune and widened by the
-  &le;1&#9733; publication tier, neither of which this panel models.
+  1&#9733; publication tier, neither of which this panel models.
 </p>
 
 """
@@ -4476,6 +4476,25 @@ def render_html(
   <td class="no">VUS, Benign, Likely benign, Conflicting, drug response, and everything else
       &mdash; 92% of ClinVar by variant count</td>
   <td><code>predicate_map</code></td>
+</tr>
+<tr>
+  <td><strong>Review status</strong></td>
+  <td>1&#9733; and above only</td>
+  <td class="no">Everything at 0&#9733; &mdash; <code>no assertion criteria provided</code>,
+      <code>no classification provided</code>, <code>flagged submission</code> and the rest.
+      0&#9733; is not weak evidence, it is the absence of a stated assertion, so no path
+      admits it: not the aggregate gate, not the publication tier, and not the
+      multi-submitter concordance rescue (several submitters each stating no criteria is
+      not independent corroboration)</td>
+  <td><code>min_review_stars</code></td>
+</tr>
+<tr>
+  <td><strong>Gene id space</strong></td>
+  <td><code>HGNC</code>, from <code>variant_summary.txt.gz</code>'s <code>HGNC_ID</code></td>
+  <td class="no"><code>NCBIGene</code> &mdash; the Monarch KG keys <em>human</em> genes on
+      HGNC, so NCBIGene-subjected gene edges resolve to nothing on merge and dangle
+      silently</td>
+  <td><code>make_variant_gene_map()</code></td>
 </tr>
 <tr>
   <td><strong>Variant class</strong></td>
