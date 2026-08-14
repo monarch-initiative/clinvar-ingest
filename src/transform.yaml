@@ -55,11 +55,20 @@ transform:
   mode: "flat"
 
 writer:
+  # process_row() sets xref / has_gene / in_taxon / in_taxon_label on every
+  # SequenceVariant; properties omitted here are silently dropped from the output TSV,
+  # so all four are listed. in_taxon in particular is load-bearing in the Monarch KG.
+  # provided_by is deliberately absent: nothing in this ingest sets it, so listing it
+  # emitted an empty column on all 56k nodes / 137k edges. It is monarch-ingest's to fill.
   node_properties:
     - id
-    - name
     - category
+    - name
+    - xref
     - type
+    - has_gene
+    - in_taxon
+    - in_taxon_label
   edge_properties:
     - id
     - subject
@@ -68,9 +77,13 @@ writer:
     - category
     - original_predicate
     - qualifiers
+    - negated
     - knowledge_level
     - agent_type
     - primary_knowledge_source
     - aggregator_knowledge_source
-  min_node_count: 10
-  min_edge_count: 5
+  # Floors sized to catch a silently-broken upstream (an empty or truncated download)
+  # rather than to track the release exactly. Current release emits ~56k nodes and
+  # ~137k edges; ClinVar grows over time, so these sit well below that.
+  min_node_count: 40000
+  min_edge_count: 100000

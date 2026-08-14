@@ -46,3 +46,6 @@ output/
 
 # uv
 uv.lock
+
+# macOS Finder metadata
+.DS_Store
