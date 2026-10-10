@@ -800,6 +800,9 @@ def test_case6_only_the_asserted_gene(test_case6_entities):
     assert len(gene_assocs) == 1
     assert gene_assocs[0].object == "HGNC:12601"
     assert test_case6_entities[2].object == "MONDO:0019118"
+    # urn:uuid edge ids pass through the RDF export as valid IRIs
+    assert gene_assocs[0].id.startswith("urn:uuid:")
+    assert test_case6_entities[2].id.startswith("urn:uuid:")
 
 
 def test_case7_type_is_variant_class_not_consequence(test_case7_entities):
