@@ -470,7 +470,7 @@ def _disease_edge(subject, dis_id, predicate, og_preds, row):
     (variant, disease): the strong tier claims a disease first, and the publication
     tier only sees what is left, so the two can never contradict each other."""
     return VariantToDiseaseAssociation(
-        id=str(uuid.uuid4()),
+        id=f"urn:uuid:{uuid.uuid4()}",
         subject=subject,
         predicate=predicate,
         qualifiers=[row["CLNREVSTAT"]],
@@ -660,7 +660,7 @@ def process_row(
     for gene_id in gene_ids:
         entities.append(
             VariantToGeneAssociation(
-                id=str(uuid.uuid4()),
+                id=f"urn:uuid:{uuid.uuid4()}",
                 subject=seq_var.id,
                 predicate=IS_SEQUENCE_VARIANT_OF,
                 object=gene_id,
